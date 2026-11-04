@@ -185,6 +185,29 @@ def main():
             results['fallback'] = page.evaluate("({kind: window.__app.share.kind, notice: document.getElementById('notice').textContent, link: document.getElementById('shareLink').value.split('?')[1]})")
             ctx.close()
 
+            # 화면 언어: 영어 기기여도 한국어로 시작, 🌐 버튼으로 바꾸기
+            ctx = browser.new_context(locale='en-US', viewport={'width': 412, 'height': 915})
+            page = ctx.new_page()
+            page.goto(f'http://127.0.0.1:{web_port}/')
+            page.wait_for_timeout(500)
+            ui = {'enDevice': page.text_content('#startBtn'), 'btn': page.text_content('#uiBtn')}
+            page.click('#uiBtn')
+            page.click('#uiList button:has-text("Русский")')
+            page.wait_for_timeout(200)
+            ui['afterRu'] = page.text_content('#startBtn')
+            page.screenshot(path=os.path.join(OUT, 'ui_ru.png'))
+            page.reload()
+            page.wait_for_timeout(500)
+            ui['afterReload'] = page.text_content('#startBtn')
+            ctx.close()
+            ctx = browser.new_context(locale='ru-RU')
+            page = ctx.new_page()
+            page.goto(f'http://127.0.0.1:{web_port}/')
+            page.wait_for_timeout(400)
+            ui['ruDevice'] = page.text_content('#startBtn')
+            ctx.close()
+            results['ui'] = ui
+
             # 악성 링크 방지: 배포 주소처럼 localhost가 아닌 곳에서는 apiBase 무시되는지(함수 직접 확인)
             ctx = browser.new_context()
             page = ctx.new_page()

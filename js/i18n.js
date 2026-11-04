@@ -67,7 +67,7 @@ const D = {
     oa_network: '인터넷 연결 문제로 OpenAI에 접속하지 못했습니다.', oa_rate: 'OpenAI 요청이 너무 많아 잠시 대기합니다.',
     oa_server: 'OpenAI 서버 오류입니다.', oa_model: 'OpenAI 모델을 사용할 수 없습니다.', oa_bad: 'OpenAI 오류: {e}',
     share: '📡 공유', shareTitle: '보기 전용 주소로 공유', shareDesc: '이 주소를 연 사람은 지금 화면의 자막을 실시간으로 <b>보기만</b> 할 수 있습니다. 설정·마이크·키에는 접근할 수 없습니다.',
-    shareStart: '공유 시작', shareStop: '공유 끝내기', shareCopy: '주소 복사', shareCopied: '주소를 복사했습니다.',
+     uiLangTitle: '화면 언어', shareStart: '공유 시작', shareStop: '공유 끝내기', shareCopy: '주소 복사', shareCopied: '주소를 복사했습니다.',
     shareOn: '📡 공유 중 · 보는 사람 {n}명', shareOff: '공유가 꺼져 있습니다.', shareNotReady: '공유 기능은 아직 서버 설정 전입니다(관리자: Supabase 주소 필요).',
     shareFail: '공유 연결 실패: {e}', shareConnecting: '연결 중…', shareFallbackLocal: '서버에 연결하지 못해 같은 기기 공유로 바꿨습니다(인터넷 확인). ({e})', shareFor: '보는 사람 화면:', shareBoth: '두 언어 모두', shareOnly: '{lang}만', shareLocalOnly: '지금은 같은 기기의 다른 창(예: 빔프로젝터용 창)에서만 볼 수 있습니다.', shareEnded: '공유를 끝냈습니다.',
     viewerBadge: '보기 전용', viewerWait: '통역이 시작되기를 기다리는 중…', viewerLost: '연결이 끊겼습니다. 다시 연결하는 중…',
@@ -139,7 +139,7 @@ const D = {
     oa_network: 'Нет связи с OpenAI.', oa_rate: 'Слишком много запросов к OpenAI, жду.', oa_server: 'Ошибка сервера OpenAI.',
     oa_model: 'Модель OpenAI недоступна.', oa_bad: 'Ошибка OpenAI: {e}',
     share: '📡 Поделиться', shareTitle: 'Ссылка только для просмотра', shareDesc: 'Открывшие ссылку видят субтитры в реальном времени и могут только <b>смотреть</b>.',
-    shareStart: 'Начать показ', shareStop: 'Закончить показ', shareCopy: 'Копировать ссылку', shareCopied: 'Ссылка скопирована.',
+     uiLangTitle: 'Язык интерфейса', shareStart: 'Начать показ', shareStop: 'Закончить показ', shareCopy: 'Копировать ссылку', shareCopied: 'Ссылка скопирована.',
     shareOn: '📡 Показ · зрителей: {n}', shareOff: 'Показ выключен.', shareNotReady: 'Показ пока не настроен (нужен адрес Supabase).',
     shareFail: 'Ошибка подключения: {e}', shareConnecting: 'Подключение…', shareFallbackLocal: 'Сервер недоступен — показ только на этом устройстве (проверьте интернет). ({e})', shareFor: 'Экран зрителя:', shareBoth: 'Оба языка', shareOnly: 'Только {lang}', shareLocalOnly: 'Сейчас просмотр возможен только в другом окне этого же устройства.', shareEnded: 'Показ завершён.',
     viewerBadge: 'Только просмотр', viewerWait: 'Ожидание начала перевода…', viewerLost: 'Связь потеряна. Переподключаюсь…',
@@ -211,7 +211,7 @@ const D = {
     oa_network: 'Cannot reach OpenAI.', oa_rate: 'Too many OpenAI requests — waiting.', oa_server: 'OpenAI server error.',
     oa_model: 'OpenAI model unavailable.', oa_bad: 'OpenAI error: {e}',
     share: '📡 Share', shareTitle: 'Share a view-only link', shareDesc: 'People who open this link see the live subtitles and can <b>only watch</b>.',
-    shareStart: 'Start sharing', shareStop: 'Stop sharing', shareCopy: 'Copy link', shareCopied: 'Link copied.',
+     uiLangTitle: 'Screen language', shareStart: 'Start sharing', shareStop: 'Stop sharing', shareCopy: 'Copy link', shareCopied: 'Link copied.',
     shareOn: '📡 Sharing · {n} viewer(s)', shareOff: 'Sharing is off.', shareNotReady: 'Sharing is not set up yet (needs the Supabase address).',
     shareFail: 'Sharing failed: {e}', shareConnecting: 'Connecting…', shareFallbackLocal: 'Could not reach the server, so sharing is limited to this device (check the internet). ({e})', shareFor: 'Viewer screen:', shareBoth: 'Both languages', shareOnly: '{lang} only', shareLocalOnly: 'For now it works only in another window on this same device.', shareEnded: 'Sharing stopped.',
     viewerBadge: 'View only', viewerWait: 'Waiting for interpretation to start…', viewerLost: 'Connection lost. Reconnecting…',
@@ -230,8 +230,12 @@ let cur = 'ko';
 export function setUiLang(l) { cur = D[l] ? l : 'ko'; if (typeof document !== 'undefined') document.documentElement.lang = cur; }
 export const uiLang = () => cur;
 export function defaultUiLang() {
-  const n = (navigator.language || 'ko').slice(0, 2).toLowerCase();
-  return D[n] ? n : 'en';
+  // 기기 언어 목록에 러시아어가 한국어보다 먼저 있으면 러시아어, 그 밖에는 한국어(영어 기기여도 한국어로 시작)
+  let list = [];
+  try { list = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']).map((x) => String(x).slice(0, 2).toLowerCase()); } catch (e) { /* 무시 */ }
+  const ko = list.indexOf('ko'), ru = list.indexOf('ru');
+  if (ru >= 0 && (ko < 0 || ru < ko)) return 'ru';
+  return 'ko';
 }
 
 export function t(key, vars = {}) {
