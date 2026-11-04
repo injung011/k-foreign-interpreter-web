@@ -72,10 +72,12 @@ export class ShareHost {
 
   async start(kind) {
     this.stop();
+    const room = newRoomId();
+    const tr = transportFor(kind);
+    try { await tr.open(room, (m) => this._onMsg(m)); } catch (e) { tr.close(); throw e; }
     this.kind = kind;
-    this.room = newRoomId();
-    this.tr = transportFor(kind);
-    await this.tr.open(this.room, (m) => this._onMsg(m));
+    this.room = room;
+    this.tr = tr;
     this.pulse = setInterval(() => {
       const now = Date.now();
       for (const [v, ts] of this.viewers) if (now - ts > 15000) this.viewers.delete(v);

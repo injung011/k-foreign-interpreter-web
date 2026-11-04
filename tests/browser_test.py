@@ -127,7 +127,7 @@ def main():
             host.add_init_script("if (!localStorage.getItem('kfi.settings')) {"
                                  "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', situation:'church', uiLang:'ko'}));"
                                  "localStorage.setItem('kfi.openaiKey', 'sk-good');}")
-            host.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1')
+            host.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1&shareVia=local')
             host.wait_for_timeout(600)
             host.click('#shareBtn')
             host.click('#shareToggle')
@@ -171,6 +171,18 @@ def main():
             vs['pasted'] = host.input_value('#keyInput')
             host.screenshot(path=os.path.join(OUT, 'settings_ru.png'))
             results['share'] = vs
+            ctx.close()
+
+            # 서버(Supabase)에 못 붙으면 같은 기기 공유로 자동 전환되는지(이 시험 환경은 외부 접속 차단)
+            ctx = browser.new_context()
+            page = ctx.new_page()
+            page.goto(f'http://127.0.0.1:{web_port}/')
+            page.wait_for_timeout(500)
+            page.click('#shareBtn')
+            page.click('#shareToggle')
+            page.wait_for_function('window.__app.share.active', timeout=40000)
+            page.wait_for_timeout(300)
+            results['fallback'] = page.evaluate("({kind: window.__app.share.kind, notice: document.getElementById('notice').textContent, link: document.getElementById('shareLink').value.split('?')[1]})")
             ctx.close()
 
             # 악성 링크 방지: 배포 주소처럼 localhost가 아닌 곳에서는 apiBase 무시되는지(함수 직접 확인)

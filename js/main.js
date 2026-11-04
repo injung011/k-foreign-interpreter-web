@@ -376,7 +376,8 @@ function shareLink() {
 function renderShareDlg() {
   const on = share.active;
   $('shareToggle').textContent = on ? t('shareStop') : t('shareStart');
-  $('shareMode').textContent = supabaseConfigured() ? '' : t('shareNotReady') + ' ' + t('shareLocalOnly');
+  $('shareMode').textContent = !supabaseConfigured() ? t('shareNotReady') + ' ' + t('shareLocalOnly')
+    : on && share.kind === 'local' ? t('shareLocalOnly') : '';
   const seg = $('shareFor');
   seg.innerHTML = '';
   if (shareShow !== 'both' && shareShow !== s.left && shareShow !== s.right) shareShow = 'both';
@@ -416,10 +417,21 @@ async function toggleShare() {
     notice(t('shareEnded'));
     if (!engine.running) releaseAwake();
   } else {
+    // 시험용: 이 컴퓨터(localhost)에서만 ?shareVia=local 로 서버 없이 시험
+    const forceLocal = ['127.0.0.1', 'localhost'].includes(location.hostname) && params.get('shareVia') === 'local';
+    $('shareToggle').disabled = true;
+    $('shareMode').textContent = t('shareConnecting');
     try {
-      await share.start(supabaseConfigured() ? 'supabase' : 'local');
+      if (supabaseConfigured() && !forceLocal) {
+        try { await share.start('supabase'); } catch (e) {
+          share.stop();
+          await share.start('local');
+          notice(t('shareFallbackLocal', { e: e.message || e }));
+        }
+      } else await share.start('local');
       keepAwake();
     } catch (e) { notice(t('shareFail', { e: e.message || e })); share.stop(); }
+    $('shareToggle').disabled = false;
   }
   renderShareDlg();
   renderShareBar(share.viewers.size);
