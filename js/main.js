@@ -8,7 +8,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.3';
+export const VERSION = 'web v1.3.1';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -625,6 +625,17 @@ render();
 drawMeter();
 if (IS_VIEWER) startViewer();
 else setStatus('idle', t('ready'));
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  // 새 버전이 들어오면 한 번 새로고침(통역·공유 중에는 끊기지 않게 안내만)
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    if (engine.running || share.active) { notice(t('updateReady')); return; }
+    reloaded = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+}
 // 시험용
 window.__app = { engine, speaker, entries, share, get settings() { return s; } };
