@@ -1,4 +1,5 @@
 // OpenAI 호출 (브라우저에서 사용자의 키로 직접 호출)
+import { t } from './i18n.js';
 import { lang } from './langs.js';
 import { translateInstructions } from './situations.js';
 import { looksTranslated } from './textfilter.js';
@@ -15,14 +16,7 @@ const TTS_PER_MIN = 0.015;
 export class OpenAIError extends Error {
   constructor(kind, message, status) { super(message); this.kind = kind; this.status = status; }
   get userMessage() {
-    return {
-      auth: 'OpenAI API 키가 올바르지 않습니다. 설정에서 다시 입력하세요.',
-      quota: 'OpenAI 충전 잔액이 부족합니다. platform.openai.com → Billing에서 충전하세요.',
-      network: '인터넷 연결 문제로 OpenAI에 접속하지 못했습니다.',
-      rate: 'OpenAI 요청이 너무 많아 잠시 대기합니다.',
-      server: 'OpenAI 서버 오류입니다. 잠시 후 다시 시도합니다.',
-      model: 'OpenAI 모델을 사용할 수 없습니다.',
-    }[this.kind] || `OpenAI 오류: ${this.message}`;
+    return t(`oa_${['auth', 'quota', 'network', 'rate', 'server', 'model'].includes(this.kind) ? this.kind : 'bad'}`, { e: this.message });
   }
 }
 

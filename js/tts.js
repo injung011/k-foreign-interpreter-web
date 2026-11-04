@@ -1,5 +1,6 @@
 // 번역문 소리 내어 읽기: OpenAI 음성(키가 있을 때) → 브라우저 내장 음성
 import { freeSpeak } from './free.js';
+import { t } from './i18n.js';
 
 export const VOICES = ['coral', 'nova', 'sage', 'alloy', 'shimmer', 'marin', 'cedar', 'echo', 'onyx'];
 const MAX_PENDING = 3;
@@ -20,7 +21,7 @@ export class Speaker {
   configure(client, voice) { this.client = client; this.voice = voice; this.offUntil = 0; }
 
   say(text, code, id) {
-    if (!text || text.startsWith('[번역 실패')) return;
+    if (!text) return;
     this.queue.push({ text, code, id, gen: this.gen });
     while (this.queue.length > MAX_PENDING) this.queue.shift();
     this._next();
@@ -51,7 +52,7 @@ export class Speaker {
           played = true;
         } catch (e) {
           this.offUntil = Date.now() + (e.kind === 'auth' || e.kind === 'quota' ? 600000 : 30000);
-          this.cb.onNotice?.((e.userMessage || String(e)) + ' → 브라우저 음성으로 읽습니다.');
+          this.cb.onNotice?.((e.userMessage || String(e)) + t('fallbackVoice'));
         }
       }
       if (!played && !cancelled()) await freeSpeak(item.text, item.code, cancelled);

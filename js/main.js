@@ -1,17 +1,31 @@
 import { Interpreter, situationWarning } from './engine.js';
 import { freeRecognitionSupported } from './free.js';
-import { label, lang, LANGS } from './langs.js';
+import { applyStatic, defaultUiLang, langName, setUiLang, t, UI_LANGS, uiLang } from './i18n.js';
+import { lang, LANGS } from './langs.js';
 import { OpenAIClient } from './openai.js';
+import { publicEntry, ShareHost, ShareViewer, supabaseConfigured } from './share.js';
 import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.0';
+export const VERSION = 'web v1.1';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
+const params = new URLSearchParams(location.search);
+const VIEW_ROOM = (params.get('view') || '').replace(/[^a-z0-9]/g, '').slice(0, 32);
+const IS_VIEWER = !!VIEW_ROOM;
+const VIEW_VIA = params.get('via') === 'local' ? 'local' : 'supabase';
 
-let s = store.loadSettings();
-let key = store.loadKey();
+// ---------------------------------------------------------------- 상태
+const VIEWER_KEY = 'kfi.viewer';
+function loadViewerSettings() {
+  let v = { fontSize: 28, layout: 'auto', view: 'both', flipTop: false, uiLang: '', readLeft: false, readRight: false,
+    left: 'ko', right: 'ru', situation: 'daily', note: '', mode: 'free', speaking: 'auto' };
+  try { Object.assign(v, JSON.parse(localStorage.getItem(VIEWER_KEY) || '{}')); } catch (e) { /* 무시 */ }
+  return v;
+}
+let s = IS_VIEWER ? loadViewerSettings() : store.loadSettings();
+let key = IS_VIEWER ? '' : store.loadKey();
 const base = store.apiBase();
 const entries = new Map();
 let wakeLock = null;
@@ -19,8 +33,17 @@ let speakingCount = 0;
 let unmuteTimer = null;
 let level = [0, 0, false, 0];
 let noticeTimer = null;
+let viewerStatus = 'wait';
 
-// ---------------------------------------------------------------- 엔진·읽기
+function save() {
+  if (IS_VIEWER) {
+    const keep = (({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight }) => ({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight }))(s);
+    try { localStorage.setItem(VIEWER_KEY, JSON.stringify(keep)); } catch (e) { /* 무시 */ }
+  } else store.saveSettings(s);
+}
+setUiLang(s.uiLang || defaultUiLang());
+
+// ---------------------------------------------------------------- 엔진·읽기·공유
 const engine = new Interpreter({
   onEntry: addEntry,
   onTranslated: setTranslation,
@@ -29,169 +52,218 @@ const engine = new Interpreter({
   onLevel: (lv, thr, act) => { level = [lv, thr, act, Date.now()]; },
   onNotice: notice,
   onCost: addCost,
-  onStopped: () => { setRunning(false); setStatus('idle', '멈춤'); },
+  onStopped: () => { setRunning(false); setStatus('idle', t('stopped')); },
 });
 const speaker = new Speaker({
   onStart: (item) => {
     speakingCount++;
     clearTimeout(unmuteTimer);
-    if (s.muteWhileSpeaking) engine.mute(true);
+    if (s.muteWhileSpeaking && !IS_VIEWER) engine.mute(true);
     markSpeaking(item.id, true);
-    setStatus('busy', '통역을 읽는 중…' + (s.muteWhileSpeaking ? ' (마이크 잠시 멈춤)' : ''));
+    if (!IS_VIEWER) setStatus('busy', t('reading') + (s.muteWhileSpeaking ? t('micPaused') : ''));
   },
   onEnd: (item) => {
     speakingCount = Math.max(0, speakingCount - 1);
     markSpeaking(item.id, false);
-    if (!speakingCount) unmuteTimer = setTimeout(() => {
+    if (!speakingCount && !IS_VIEWER) unmuteTimer = setTimeout(() => {
       engine.mute(false);
-      if (engine.running) setStatus('listening', '듣는 중');
+      if (engine.running) setStatus('listening', t('listening'));
     }, 450);
   },
   onNotice: notice,
   onCost: addCost,
 });
+const share = new ShareHost({
+  getSnapshot: () => ({ entries: [...entries.values()].slice(-30).map(publicEntry), state: publicState() }),
+  onViewers: (n) => renderShareBar(n),
+});
+const publicState = () => ({ left: s.left, right: s.right, situation: s.situation, note: s.note });
 
 function applyEngine() {
+  if (IS_VIEWER) { speaker.configure(null, s.voice); return; }
   const client = s.mode === 'openai' && key ? new OpenAIClient(key, base) : null;
   engine.configure(s, s.mode === 'openai' ? key : '', base);
   speaker.configure(client, s.voice);
 }
 
-function save() { store.saveSettings(s); }
-
 // ---------------------------------------------------------------- 화면 그리기
-function render() {
-  document.documentElement.style.setProperty('--fs', `${s.fontSize}px`);
-  const sit = SITUATIONS[s.situation];
-  $('sitBtn').textContent = `${sit.icon} ${sit.name}${s.note ? ' · ' + s.note : ''}`;
-  for (const [id, code] of [['leftBtn', s.left], ['rightBtn', s.right]]) {
-    const b = $(id);
-    b.textContent = lang(code).name;
-    if (lang(code).native !== lang(code).name) {
-      const sm = document.createElement('small');
-      sm.textContent = ` · ${lang(code).native}`;   // 좁은 휴대폰에서는 CSS로 숨김
-      b.appendChild(sm);
-    }
-    b.title = label(code);
+const sideLang = (side) => (side === 'left' ? s.left : s.right);
+const sideOf = (e, code) => (e.pair[0] === code ? 'left' : 'right');
+const paneBody = (side) => document.querySelector(`.pane-body[data-side="${side}"]`);
+
+function langLabelEl(el, code) {
+  el.textContent = langName(code, LANGS);
+  if (lang(code).native !== langName(code, LANGS)) {
+    const sm = document.createElement('small');
+    sm.textContent = ` · ${lang(code).native}`;
+    el.appendChild(sm);
   }
-  setPressed($('readLeft'), s.readLeft);
-  setPressed($('readRight'), s.readRight);
+}
+
+function render() {
+  applyStatic(document);
+  document.title = t('title');
+  document.body.classList.toggle('viewer', IS_VIEWER);
+  document.documentElement.style.setProperty('--fs', `${s.fontSize}px`);
+  const sit = SITUATIONS[s.situation] || SITUATIONS.daily;
+  $('sitBtn').textContent = `${sit.icon} ${t('sit_' + s.situation)}${s.note ? ' · ' + s.note : ''}`;
+  $('sitBtn').disabled = IS_VIEWER;
+  $('viewerBadge').hidden = !IS_VIEWER;
+  for (const side of ['left', 'right']) {
+    langLabelEl(document.querySelector(`.pname[data-side="${side}"]`), sideLang(side));
+    const rb = document.querySelector(`.read[data-side="${side}"]`);
+    const on = side === 'left' ? s.readLeft : s.readRight;
+    rb.setAttribute('aria-pressed', String(on));
+    rb.textContent = on ? '🔊' : '🔈';
+  }
   const warning = situationWarning(s.situation);
   $('warn').hidden = !warning;
   $('warn').textContent = warning ? '⚠ ' + warning : '';
 
   const free = s.mode !== 'openai' || !key;
-  if (free && s.speaking === 'auto') s.speaking = 'left';
-  for (const b of $('speakingBar').querySelectorAll('button')) {
+  if (!IS_VIEWER && free && s.speaking === 'auto') s.speaking = 'left';
+  for (const b of $('speakingBar').querySelectorAll('button[data-v]')) {
     const v = b.dataset.v;
-    if (v === 'left') b.textContent = lang(s.left).name;
-    if (v === 'right') b.textContent = lang(s.right).name;
+    if (v === 'left') b.textContent = langName(s.left, LANGS);
+    if (v === 'right') b.textContent = langName(s.right, LANGS);
     b.disabled = v === 'auto' && free;
-    b.title = b.disabled ? '자동 감지는 OpenAI 키 모드에서만 됩니다' : '';
+    b.title = b.disabled ? t('autoNeedsKey') : '';
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', String(s.speaking === v));
   }
-  const sub = $('subs');
-  sub.classList.remove('auto', 'cards', 'columns');
-  sub.classList.add(s.layout);
-  $('usage').textContent = s.mode === 'openai' && key ? `이번 달 약 $${store.monthUsage().toFixed(3)}` : (free ? '무료 모드' : '');
-  if (!entries.size) renderWelcome();
+  const panes = $('panes');
+  panes.className = `panes ${s.layout} only-${s.view}` + (s.flipTop ? ' flip' : '');
+  $('bothBtn').hidden = s.view === 'both';
+  $('usage').textContent = s.mode === 'openai' && key ? t('usage', { v: store.monthUsage().toFixed(3) }) : (free ? t('freeMode') : '');
+  $('startBtn').textContent = engine.running ? t('stop') : t('start');
+  if (!engine.running && !IS_VIEWER && $('statusText').dataset.idle !== '0') $('statusText').textContent = t('ready');
+  renderShareBar(share.viewers.size);
+  if (!entries.size) renderEmpty();
 }
 
-function setPressed(btn, on) { btn.setAttribute('aria-pressed', String(on)); btn.textContent = on ? '🔊' : '🔈'; }
-
-function renderWelcome() {
-  const sub = $('subs');
-  if (sub.querySelector('.entry')) return;
-  const free = s.mode !== 'openai' || !key;
-  sub.innerHTML = '';
-  const w = document.createElement('div');
-  w.className = 'welcome';
-  w.innerHTML = `
-    <h2>통역 자막</h2>
-    <p>말하면 <b>원문</b>(말한 그대로)과 <b>AI 통역</b>이 함께 나옵니다.</p>
-    <ol>
-      <li>위에서 <b>두 언어</b>를 고르세요. (지금: ${lang(s.left).name} ↔ ${lang(s.right).name})</li>
-      <li>맨 위 버튼으로 <b>상황</b>을 고르세요. (지금: ${SITUATIONS[s.situation].name})</li>
-      <li>아래 <b>▶ 통역 시작</b>을 누르고 말씀하세요.</li>
-    </ol>
-    ${free
-      ? `<p class="hint">지금은 <b>무료 모드</b>입니다. 말하는 언어를 직접 눌러 바꿔야 하고 정확도가 낮습니다.
-         ${freeRecognitionSupported() ? '' : '<br><b>이 브라우저는 무료 음성 인식을 지원하지 않습니다. 크롬을 쓰거나 OpenAI 키를 넣으세요.</b>'}</p>
-         <div class="row"><button class="primary" id="wKey">OpenAI 키 넣기 (더 정확)</button></div>`
-      : '<p class="hint">OpenAI 모드: 두 언어를 자동으로 알아듣고 상황에 맞게 통역합니다.</p>'}`;
-  sub.appendChild(w);
+function renderEmpty() {
+  for (const side of ['left', 'right']) {
+    const body = paneBody(side);
+    if (body.querySelector('.item')) continue;
+    body.innerHTML = '';
+    const d = document.createElement('div');
+    if (IS_VIEWER) {
+      d.className = 'placeholder';
+      d.textContent = t({ wait: 'viewerWait', lost: 'viewerLost', ended: 'viewerEnded', live: 'viewerWait' }[viewerStatus]);
+    } else if (side === 'left') {
+      const free = s.mode !== 'openai' || !key;
+      d.className = 'welcome';
+      d.innerHTML = `<h2>${t('welcomeTitle')}</h2><p>${t('welcomeBody')}</p><ol>
+        <li>${t('welcomeStep1')}</li><li>${t('welcomeStep2', { sit: t('sit_' + s.situation) })}</li><li>${t('welcomeStep3')}</li></ol>
+        ${free ? `<p class="hint">${t('welcomeFree')}${freeRecognitionSupported() ? '' : '<br><b>' + t('welcomeNoFree') + '</b>'}</p>
+        <div class="row"><button class="primary" id="wKey">${t('welcomeKeyBtn')}</button></div>`
+        : `<p class="hint">${t('welcomeOpenai')}</p>`}`;
+    } else {
+      d.className = 'placeholder';
+      d.textContent = '…';
+    }
+    body.appendChild(d);
+  }
   const k = $('wKey');
   if (k) k.onclick = openSettings;
 }
 
+function makeItem(isSrc, code) {
+  const it = document.createElement('div');
+  it.className = 'item ' + (isSrc ? 'src' : 'trans');
+  it.innerHTML = '<div class="cap"></div><div class="txt"></div>';
+  it.querySelector('.cap').textContent = isSrc ? t('original') : `${t('ai')} · ${t('translating')}`;
+  return it;
+}
+
+function clearEmpty() {
+  document.querySelectorAll('.pane-body .welcome, .pane-body .placeholder').forEach((x) => x.remove());
+}
+
 function addEntry(e) {
-  const sub = $('subs');
-  const w = sub.querySelector('.welcome');
-  if (w) w.remove();
-  const follow = atBottom();
-  const el = document.createElement('div');
-  el.className = 'entry ' + (e.src === s.left ? 'src-left' : 'src-right');
-  const srcSide = e.pair[0] === e.src ? 'left' : 'right';
-  for (const side of ['left', 'right']) {
-    const isSrc = side === srcSide;
-    const code = side === 'left' ? e.pair[0] : e.pair[1];
-    const c = document.createElement('div');
-    c.className = `cell ${side} ${isSrc ? 'src' : 'trans'}`;
-    c.innerHTML = '<div class="cap"></div><div class="txt"></div>';
-    c.querySelector('.cap').textContent = isSrc ? `원문 · ${lang(code).name}` : `AI 통역 · ${lang(code).name} · 번역 중…`;
-    c.querySelector('.txt').textContent = isSrc ? e.orig : '…';
-    if (!isSrc) c.addEventListener('dblclick', () => e.ok && speaker.say(e.trans, e.tgt, e.id));
-    el.appendChild(c);
+  clearEmpty();
+  const follow = { left: atBottom('left'), right: atBottom('right') };
+  const srcSide = sideOf(e, e.src);
+  const trSide = srcSide === 'left' ? 'right' : 'left';
+  const src = makeItem(true, e.src);
+  src.querySelector('.txt').textContent = e.orig;
+  const tr = makeItem(false, e.tgt);
+  tr.querySelector('.txt').textContent = '…';
+  tr.addEventListener('dblclick', () => e.ok && speaker.say(e.trans, e.tgt, e.id));
+  for (const [side, el] of [[srcSide, src], [trSide, tr]]) {
+    const body = paneBody(side);
+    body.insertBefore(el, body.querySelector('.interim'));
   }
-  e.el = el;
+  e.srcEl = src;
+  e.trEl = tr;
   entries.set(e.id, e);
-  const interim = sub.querySelector('.interim');
-  sub.insertBefore(el, interim);
   while (entries.size > MAX_ROWS) {
     const [id, old] = entries.entries().next().value;
-    old.el.remove();
+    old.srcEl.remove(); old.trEl.remove();
     entries.delete(id);
   }
-  if (follow) scrollBottom();
+  for (const side of ['left', 'right']) if (follow[side]) scrollBottom(side);
+  if (share.active) share.entry(e);
 }
 
 function setTranslation(e) {
-  const cell = e.el && e.el.querySelector('.cell.trans');
-  if (cell) {
-    cell.classList.toggle('fail', !e.ok);
-    cell.querySelector('.cap').textContent = `AI 통역 · ${lang(e.tgt).name}${e.ok ? '' : ' · 실패'}`;
-    cell.querySelector('.txt').textContent = e.trans;
-    if (atBottom(200)) scrollBottom();
+  const tr = e.trEl;
+  if (tr) {
+    tr.classList.toggle('fail', !e.ok);
+    tr.querySelector('.cap').textContent = `${t('ai')}${e.ok ? '' : ' · ' + t('failed')}`;
+    tr.querySelector('.txt').textContent = e.trans;
+    const side = tr.parentElement && tr.parentElement.dataset.side;
+    if (side && atBottom(side, 240)) scrollBottom(side);
   }
-  store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok });
-  const readThis = e.tgt === s.left ? s.readLeft : e.tgt === s.right ? s.readRight : false;
+  if (!IS_VIEWER) {
+    store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok });
+    if (share.active) share.entry(e);
+  }
+  const side = sideOf(e, e.tgt);
+  const readThis = side === 'left' ? s.readLeft : s.readRight;
   if (e.ok && readThis) speaker.say(e.trans, e.tgt, e.id);
+}
+
+// 보는 쪽: 받은 항목을 새로 만들거나 번역만 갱신
+function upsertViewerEntry(pe) {
+  const cur = entries.get(pe.id);
+  if (!cur) {
+    const e = { ...pe };
+    const trans = e.trans;
+    e.trans = null;
+    addEntry(e);
+    if (trans != null) { e.trans = trans; e.ok = pe.ok; setTranslation(e); }
+  } else if (cur.trans !== pe.trans && pe.trans != null) {
+    cur.trans = pe.trans; cur.ok = pe.ok;
+    setTranslation(cur);
+  }
 }
 
 function markSpeaking(id, on) {
   const e = entries.get(id);
-  const cell = e && e.el && e.el.querySelector('.cell.trans');
-  if (!cell) return;
-  cell.classList.toggle('speaking-now', on);
-  cell.querySelector('.cap').textContent = `AI 통역 · ${lang(e.tgt).name}${on ? ' · 🔊 읽는 중' : ''}`;
+  if (!e || !e.trEl) return;
+  e.trEl.classList.toggle('speaking-now', on);
+  e.trEl.querySelector('.cap').textContent = `${t('ai')}${on ? ' · ' + t('readingNow') : ''}`;
 }
 
 function showInterim(text, code) {
-  const sub = $('subs');
-  let el = sub.querySelector('.interim');
-  if (!text) { if (el) el.remove(); return; }
-  if (!el) { el = document.createElement('div'); el.className = 'interim'; sub.appendChild(el); }
-  el.textContent = `${lang(code).name}: ${text}`;
-  if (atBottom(200)) scrollBottom();
+  document.querySelectorAll('.interim').forEach((x) => { if (!text || x.dataset.code !== code) x.remove(); });
+  if (!text) return;
+  const side = code === s.left ? 'left' : 'right';
+  const body = paneBody(side);
+  let el = body.querySelector('.interim');
+  if (!el) { el = document.createElement('div'); el.className = 'interim'; el.dataset.code = code; body.appendChild(el); }
+  el.textContent = text;
+  if (atBottom(side, 240)) scrollBottom(side);
 }
 
-const atBottom = (slack = 60) => { const el = $('subs'); return el.scrollHeight - el.scrollTop - el.clientHeight < slack; };
-const scrollBottom = () => requestAnimationFrame(() => { const el = $('subs'); el.scrollTop = el.scrollHeight; });
+const atBottom = (side, slack = 60) => { const el = paneBody(side); return el.scrollHeight - el.scrollTop - el.clientHeight < slack; };
+const scrollBottom = (side) => requestAnimationFrame(() => { const el = paneBody(side); el.scrollTop = el.scrollHeight; });
 
 function setStatus(state, text) {
   $('dot').className = 'dot ' + ({ listening: 'listening', recognizing: 'busy', busy: 'busy', error: 'error' }[state] || '');
   $('statusText').textContent = text;
+  $('statusText').dataset.idle = state === 'idle' ? '1' : '0';
   if (state === 'error') notice(text);
 }
 
@@ -204,9 +276,9 @@ function notice(msg) {
 }
 
 function addCost(usd) {
-  if (!usd) return;
+  if (!usd || IS_VIEWER) return;
   store.addUsage(usd);
-  if (s.mode === 'openai' && key) $('usage').textContent = `이번 달 약 $${store.monthUsage().toFixed(3)}`;
+  if (s.mode === 'openai' && key) $('usage').textContent = t('usage', { v: store.monthUsage().toFixed(3) });
 }
 
 function drawMeter() {
@@ -225,45 +297,44 @@ function drawMeter() {
 // ---------------------------------------------------------------- 시작·멈춤
 function setRunning(on) {
   const b = $('startBtn');
-  b.textContent = on ? '■ 멈춤' : '▶ 통역 시작';
+  b.textContent = on ? t('stop') : t('start');
   b.classList.toggle('stop', on);
-  if (on) keepAwake(); else releaseAwake();
+  if (on) keepAwake(); else if (!share.active) releaseAwake();
 }
 
 async function start() {
-  if (s.mode === 'openai' && !key) { notice('OpenAI 키가 없습니다. 설정에서 키를 넣거나 무료 모드를 고르세요.'); openSettings(); return; }
-  if ((s.mode !== 'openai' || !key) && !freeRecognitionSupported()) {
-    notice('이 브라우저는 무료 음성 인식을 지원하지 않습니다. 크롬을 쓰거나 설정에서 OpenAI 키를 넣으세요.');
-    return;
-  }
+  if (s.mode === 'openai' && !key) { notice(t('noKey')); openSettings(); return; }
+  if ((s.mode !== 'openai' || !key) && !freeRecognitionSupported()) { notice(t('freeUnsupported')); return; }
   applyEngine();
   setRunning(true);
-  setStatus('busy', '마이크 여는 중…');
+  setStatus('busy', t('openingMic'));
   await engine.start();
 }
 
 async function keepAwake() {
-  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* 무시 */ }
+  try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* 무시 */ }
 }
 function releaseAwake() { try { wakeLock && wakeLock.release(); } catch (e) { /* 무시 */ } wakeLock = null; }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && engine.running) keepAwake();
+  if (document.visibilityState === 'visible' && (engine.running || IS_VIEWER || share.active)) { wakeLock = null; keepAwake(); }
 });
 
 // ---------------------------------------------------------------- 언어·상황 고르기
 function openLangPicker(side) {
-  $('langDlgTitle').textContent = side === 'left' ? '왼쪽 언어' : '오른쪽 언어';
+  if (IS_VIEWER) return;
+  $('langDlgTitle').textContent = side === 'left' ? t('langLeft') : t('langRight');
   const list = $('langList');
   list.innerHTML = '';
-  const cur = side === 'left' ? s.left : s.right;
+  const cur = sideLang(side);
   for (const code of Object.keys(LANGS)) {
     const b = document.createElement('button');
-    b.textContent = label(code);
+    langLabelEl(b, code);
     if (code === cur) b.className = 'cur';
     b.onclick = () => {
       const other = side === 'left' ? s.right : s.left;
       if (code === other) { [s.left, s.right] = [s.right, s.left]; } else s[side] = code;
       save(); applyEngine(); render();
+      if (share.active) share.send({ t: 'state', state: publicState() });
       $('langDlg').close();
     };
     list.appendChild(b);
@@ -272,75 +343,141 @@ function openLangPicker(side) {
 }
 
 function openSitPicker() {
+  if (IS_VIEWER) return;
   const grid = $('sitList');
   grid.innerHTML = '';
   let chosen = s.situation;
   for (const [k, v] of Object.entries(SITUATIONS)) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = `${v.icon} ${v.name}`;
+    b.textContent = `${v.icon} ${t('sit_' + k)}`;
     if (k === chosen) b.className = 'cur';
     b.onclick = () => { chosen = k; grid.querySelectorAll('button').forEach((x) => x.classList.toggle('cur', x === b)); };
     grid.appendChild(b);
   }
   $('noteInput').value = s.note;
-  $('sitDone').onclick = () => { s.situation = chosen; s.note = $('noteInput').value.trim(); save(); applyEngine(); render(); };
+  $('sitDone').onclick = () => {
+    s.situation = chosen; s.note = $('noteInput').value.trim();
+    save(); applyEngine(); render();
+    if (share.active) share.send({ t: 'state', state: publicState() });
+  };
   $('sitDlg').showModal();
+}
+
+// ---------------------------------------------------------------- 공유
+function shareLink() {
+  return `${location.origin}${location.pathname}?view=${share.room}${share.kind === 'local' ? '&via=local' : ''}`;
+}
+
+function renderShareDlg() {
+  const on = share.active;
+  $('shareToggle').textContent = on ? t('shareStop') : t('shareStart');
+  $('shareMode').textContent = supabaseConfigured() ? '' : t('shareNotReady')
+    + (uiLang() === 'ko' ? ' 지금은 같은 기기의 다른 창(예: 빔프로젝터용 창)에서만 볼 수 있습니다.'
+      : uiLang() === 'ru' ? ' Сейчас просмотр возможен только в другом окне этого же устройства.'
+        : ' For now it works only in another window on this same device.');
+  $('shareLinkBox').hidden = !on;
+  if (on) {
+    const link = shareLink();
+    $('shareLink').value = link;
+    $('shareOpen').href = link;
+    try {
+      const qr = window.qrcode(0, 'M');
+      qr.addData(link);
+      qr.make();
+      $('qr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    } catch (e) { $('qr').textContent = ''; }
+  }
+}
+
+function renderShareBar(n) {
+  const bar = $('shareBar');
+  bar.hidden = !share.active;
+  if (share.active) bar.textContent = t('shareOn', { n });
+}
+
+async function toggleShare() {
+  if (share.active) {
+    share.stop();
+    notice(t('shareEnded'));
+    if (!engine.running) releaseAwake();
+  } else {
+    try {
+      await share.start(supabaseConfigured() ? 'supabase' : 'local');
+      keepAwake();
+    } catch (e) { notice(t('shareFail', { e: e.message || e })); share.stop(); }
+  }
+  renderShareDlg();
+  renderShareBar(share.viewers.size);
 }
 
 // ---------------------------------------------------------------- 설정 화면
 function openSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) r.checked = r.value === s.mode;
   $('keyInput').value = key;
-  $('keyMsg').textContent = key ? `저장된 키: ${store.maskKey(key)}` : '저장된 키가 없습니다.';
+  $('keyInput').classList.remove('reveal');
+  $('keyShow').textContent = t('show');
+  $('keyMsg').textContent = key ? t('keyStored', { m: store.maskKey(key) }) : t('keyNone');
   $('keyBox').classList.toggle('hidden', s.mode !== 'openai');
-  $('termsInput').value = s.customTerms;
+  $('termsInput').value = s.customTerms || '';
   $('voiceSel').value = s.voice;
-  $('muteChk').checked = s.muteWhileSpeaking;
+  $('muteChk').checked = !!s.muteWhileSpeaking;
   $('sensRange').value = s.sensitivity; $('sensOut').textContent = s.sensitivity;
-  $('silRange').value = s.silenceSec; $('silOut').textContent = `${s.silenceSec}초`;
+  $('silRange').value = s.silenceSec; $('silOut').textContent = `${s.silenceSec}${t('sec')}`;
   $('fontRange').value = s.fontSize; $('fontOut').textContent = `${s.fontSize}px`;
   $('layoutSel').value = s.layout;
-  $('histInfo').textContent = `이 기기에 저장된 통역 ${store.loadHistory().length}건 (최근 500건까지 보관)`;
+  $('flipChk').checked = !!s.flipTop;
+  $('uiLangSel').value = uiLang();
+  $('histInfo').textContent = t('histInfo', { n: store.loadHistory().length });
   $('settingsDlg').showModal();
 }
 
 function bindSettings() {
   $('voiceSel').innerHTML = VOICES.map((v) => `<option value="${v}">${v}</option>`).join('');
+  $('uiLangSel').innerHTML = Object.entries(UI_LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   $('ver').textContent = VERSION;
+  $('uiLangSel').onchange = () => { s.uiLang = $('uiLangSel').value; setUiLang(s.uiLang); save(); render(); openSettings(); };
   for (const r of document.querySelectorAll('input[name=mode]')) {
     r.onchange = () => {
       s.mode = r.value; save();
       $('keyBox').classList.toggle('hidden', s.mode !== 'openai');
-      if (engine.running) { engine.stop(); notice('연결 방식이 바뀌어 통역을 멈췄습니다. 다시 시작하세요.'); }
+      if (engine.running) { engine.stop(); notice(t('modeChanged')); }
       applyEngine(); render();
     };
   }
   $('keyShow').onclick = () => {
     const i = $('keyInput');
-    i.type = i.type === 'password' ? 'text' : 'password';
-    $('keyShow').textContent = i.type === 'password' ? '보기' : '숨기기';
+    i.classList.toggle('reveal');
+    $('keyShow').textContent = i.classList.contains('reveal') ? t('hide') : t('show');
+  };
+  $('keyPaste').onclick = async () => {
+    try {
+      const txt = (await navigator.clipboard.readText()).trim();
+      if (!txt) throw new Error('empty');
+      $('keyInput').value = txt;
+      $('keyMsg').textContent = t('keyStored', { m: store.maskKey(txt) }) + ' → ' + t('keyTest') + ' / ' + t('save');
+    } catch (e) { $('keyMsg').textContent = t('pasteFail'); $('keyInput').focus(); }
   };
   $('keyTest').onclick = async () => {
     const k = $('keyInput').value.trim();
-    if (!k) { $('keyMsg').textContent = '키를 입력하세요.'; return; }
-    $('keyMsg').textContent = '연결 시험 중…';
+    if (!k) { $('keyMsg').textContent = t('keyEnter'); return; }
+    $('keyMsg').textContent = t('keyTesting');
     try {
       const n = await new OpenAIClient(k, base).check();
-      $('keyMsg').textContent = `✔ 연결 성공 (사용 가능한 모델 ${n}개). ‘저장’을 누르세요.`;
+      $('keyMsg').textContent = t('keyOk', { n });
     } catch (e) { $('keyMsg').textContent = '✘ ' + (e.userMessage || e.message); }
   };
   $('keySave').onclick = () => {
     const k = $('keyInput').value.trim();
-    if (k && !k.startsWith('sk-') && !confirm('OpenAI 키는 보통 sk-로 시작합니다. 그래도 저장할까요?')) return;
+    if (k && !k.startsWith('sk-') && !confirm(t('keyNotSk'))) return;
     store.saveKey(k); key = k;
-    $('keyMsg').textContent = k ? `저장했습니다: ${store.maskKey(k)}` : '키를 지웠습니다.';
+    $('keyMsg').textContent = k ? t('keySaved', { m: store.maskKey(k) }) : t('keyDeleted');
     applyEngine(); render();
   };
   $('keyDel').onclick = () => {
-    if (!confirm('이 기기에 저장된 OpenAI 키를 지울까요?')) return;
+    if (!confirm(t('keyConfirmDel'))) return;
     store.saveKey(''); key = ''; $('keyInput').value = '';
-    $('keyMsg').textContent = '키를 지웠습니다.';
+    $('keyMsg').textContent = t('keyDeleted');
     if (engine.running && s.mode === 'openai') engine.stop();
     applyEngine(); render();
   };
@@ -348,70 +485,103 @@ function bindSettings() {
   $('voiceSel').onchange = () => { s.voice = $('voiceSel').value; save(); applyEngine(); };
   $('muteChk').onchange = () => { s.muteWhileSpeaking = $('muteChk').checked; save(); if (!s.muteWhileSpeaking) engine.mute(false); };
   $('sensRange').oninput = () => { s.sensitivity = +$('sensRange').value; $('sensOut').textContent = s.sensitivity; save(); applyEngine(); };
-  $('silRange').oninput = () => { s.silenceSec = +$('silRange').value; $('silOut').textContent = `${s.silenceSec}초`; save(); applyEngine(); };
+  $('silRange').oninput = () => { s.silenceSec = +$('silRange').value; $('silOut').textContent = `${s.silenceSec}${t('sec')}`; save(); applyEngine(); };
   $('fontRange').oninput = () => { s.fontSize = +$('fontRange').value; $('fontOut').textContent = `${s.fontSize}px`; save(); render(); };
   $('layoutSel').onchange = () => { s.layout = $('layoutSel').value; save(); render(); };
+  $('flipChk').onchange = () => { s.flipTop = $('flipChk').checked; save(); render(); };
   $('histDown').onclick = downloadHistory;
   $('histClear').onclick = () => {
-    if (!confirm('이 기기에 저장된 통역 기록을 모두 지울까요?')) return;
+    if (!confirm(t('histConfirm'))) return;
     store.clearHistory();
-    $('histInfo').textContent = '기록을 지웠습니다.';
+    $('histInfo').textContent = t('histCleared');
   };
 }
 
 function downloadHistory() {
   const h = store.loadHistory();
-  if (!h.length) { notice('저장된 통역 기록이 없습니다.'); return; }
-  const lines = ['통역 기록 (원문 = 말한 그대로, AI 통역 = 인공지능 번역)', ''];
+  if (!h.length) { notice(t('histNone')); return; }
+  const lines = [t('histHead'), ''];
   for (const r of h) {
-    const t = new Date(r.t);
-    lines.push(`[${t.toLocaleString('ko-KR')}]`, `원문(${lang(r.src).name}): ${r.orig}`, `AI 통역(${lang(r.tgt).name}): ${r.trans}`, '');
+    lines.push(`[${new Date(r.t).toLocaleString()}]`, `${t('original')} (${langName(r.src, LANGS)}): ${r.orig}`,
+      `${t('ai')} (${langName(r.tgt, LANGS)}): ${r.trans}`, '');
   }
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `통역기록_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.txt`;
+  a.download = `interpretation_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.txt`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
 // ---------------------------------------------------------------- 연결
+function toggleRead(side) {
+  const k = side === 'left' ? 'readLeft' : 'readRight';
+  s[k] = !s[k];
+  save(); render();
+  if (s[k]) notice(t('readOn', { lang: langName(sideLang(side), LANGS) }));
+  else { speaker.stopAll(); notice(t('readOff')); }
+}
+
 function bind() {
   $('startBtn').onclick = () => (engine.running ? engine.stop() : start());
   $('settingsBtn').onclick = openSettings;
   $('sitBtn').onclick = openSitPicker;
-  $('leftBtn').onclick = () => openLangPicker('left');
-  $('rightBtn').onclick = () => openLangPicker('right');
+  $('shareBtn').onclick = () => { renderShareDlg(); $('shareDlg').showModal(); };
+  $('shareBar').onclick = () => { renderShareDlg(); $('shareDlg').showModal(); };
+  $('shareToggle').onclick = toggleShare;
+  $('shareCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('shareLink').value); notice(t('shareCopied')); }
+    catch (e) { $('shareLink').select(); }
+  };
+  document.querySelectorAll('.pname').forEach((b) => { b.onclick = () => openLangPicker(b.dataset.side); });
+  document.querySelectorAll('.read').forEach((b) => { b.onclick = () => toggleRead(b.dataset.side); });
+  document.querySelectorAll('.expand').forEach((b) => {
+    b.onclick = () => { s.view = s.view === b.dataset.side ? 'both' : b.dataset.side; save(); render(); };
+  });
+  $('bothBtn').onclick = () => { s.view = 'both'; save(); render(); };
   $('swapBtn').onclick = () => {
     [s.left, s.right] = [s.right, s.left];
     [s.readLeft, s.readRight] = [s.readRight, s.readLeft];
     if (s.speaking !== 'auto') s.speaking = s.speaking === 'left' ? 'right' : 'left';
     save(); applyEngine(); render();
+    if (share.active) share.send({ t: 'state', state: publicState() });
   };
-  $('readLeft').onclick = () => toggleRead('readLeft');
-  $('readRight').onclick = () => toggleRead('readRight');
-  for (const b of $('speakingBar').querySelectorAll('button')) {
+  for (const b of $('speakingBar').querySelectorAll('button[data-v]')) {
     b.onclick = () => { if (b.disabled) return; s.speaking = b.dataset.v; save(); applyEngine(); render(); };
   }
+  $('fontUp').onclick = () => { s.fontSize = Math.min(48, s.fontSize + 2); save(); render(); };
+  $('fontDown').onclick = () => { s.fontSize = Math.max(14, s.fontSize - 2); save(); render(); };
   $('settingsDlg').addEventListener('close', () => { applyEngine(); render(); });
   bindSettings();
 }
 
-function toggleRead(k) {
-  s[k] = !s[k];
-  save(); render();
-  const code = k === 'readLeft' ? s.left : s.right;
-  if (s[k]) notice(`${lang(code).name}로 나온 AI 통역을 소리로 읽습니다. 다시 누르면 꺼집니다.`);
-  else { speaker.stopAll(); notice('읽기를 껐습니다.'); }
+// ---------------------------------------------------------------- 보기 전용
+async function startViewer() {
+  const viewer = new ShareViewer({
+    onEntry: upsertViewerEntry,
+    onState: (st) => {
+      const changed = st.left !== s.left || st.right !== s.right || st.situation !== s.situation || st.note !== s.note;
+      Object.assign(s, { left: st.left, right: st.right, situation: st.situation, note: st.note || '' });
+      if (changed) render();
+    },
+    onStatus: (st) => {
+      if (st === viewerStatus) return;
+      viewerStatus = st;
+      if (st === 'lost') notice(t('viewerLost'));
+      if (st === 'ended') notice(t('viewerEnded'));
+      if (!entries.size) renderEmpty();
+    },
+  });
+  try { await viewer.open(VIEW_ROOM, VIEW_VIA); keepAwake(); } catch (e) { notice(t('shareFail', { e: e.message || e })); }
+  window.__viewer = viewer;
 }
 
 bind();
 applyEngine();
 render();
 drawMeter();
-setStatus('idle', '준비 — ▶ 통역 시작을 누르세요');
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
-// 시험용으로 노출
-window.__app = { engine, speaker, entries, get settings() { return s; } };
+if (IS_VIEWER) startViewer();
+else setStatus('idle', t('ready'));
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+// 시험용
+window.__app = { engine, speaker, entries, share, get settings() { return s; } };

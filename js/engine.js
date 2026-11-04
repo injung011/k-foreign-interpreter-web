@@ -1,7 +1,8 @@
 // 통역 흐름: 마이크 → 문장 나누기 → 음성 인식 → 번역 → 화면
 import { MicCapture } from './audio.js';
 import { FreeRecognizer, freeTranslate } from './free.js';
-import { lang, sameScript } from './langs.js';
+import { langName, t } from './i18n.js';
+import { LANGS, sameScript } from './langs.js';
 import { OpenAIClient, OpenAIError } from './openai.js';
 import { keywords, SITUATIONS } from './situations.js';
 import { Segmenter } from './segmenter.js';
@@ -54,7 +55,7 @@ export class Interpreter {
       this.mic = new MicCapture((b) => this._onBlock(b));
       try {
         const name = await this.mic.start();
-        this.cb.onStatus('listening', `듣는 중 · ${name || '마이크'}`);
+        this.cb.onStatus('listening', `${t('listening')} · ${name || 'mic'}`);
       } catch (e) {
         this.running = false;
         this.cb.onStatus('error', micError(e));
@@ -64,7 +65,7 @@ export class Interpreter {
       this.free = new FreeRecognizer({
         onFinal: (text, code) => this._onFreeFinal(text, code),
         onInterim: (text, code) => this.cb.onInterim(text, code),
-        onState: (st) => st === 'listening' && this.cb.onStatus('listening', `듣는 중 · ${lang(this.speakingFree()).name} (무료 모드)`),
+        onState: (st) => st === 'listening' && this.cb.onStatus('listening', t('listeningFree', { lang: langName(this.speakingFree(), LANGS) })),
         onError: (msg) => { this.cb.onNotice(msg); if (!this.free.running) this.stop(); },
       });
       this.free.start(this.speakingFree());
@@ -101,7 +102,7 @@ export class Interpreter {
 
   _queue(samples) {
     this.utts.push(samples);
-    if (this.utts.length > 6) { this.utts.shift(); this.cb.onNotice('처리가 밀려 이전 음성 하나를 건너뛰었습니다.'); }
+    if (this.utts.length > 6) { this.utts.shift(); this.cb.onNotice(t('queueSkip')); }
     this._recognizeLoop();
   }
 
@@ -112,7 +113,7 @@ export class Interpreter {
       while (this.utts.length) {
         const samples = this.utts.shift();
         if (Date.now() < this.cooldownUntil) continue;
-        this.cb.onStatus('recognizing', '음성을 글자로 바꾸는 중…');
+        this.cb.onStatus('recognizing', t('recognizing'));
         try {
           const mode = this.speakingCode();
           const kw = keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang);
@@ -130,12 +131,12 @@ export class Interpreter {
             return;
           }
           this.cooldownUntil = Date.now() + 5000;
-          this.cb.onNotice((e.userMessage || String(e)) + ' 잠시 후 다시 시도합니다.');
+          this.cb.onNotice((e.userMessage || String(e)) + t('retryLater'));
         }
       }
     } finally {
       this.recognizing = false;
-      if (this.running) this.cb.onStatus('listening', '듣는 중');
+      if (this.running) this.cb.onStatus('listening', t('listening'));
     }
   }
 
@@ -165,14 +166,13 @@ export class Interpreter {
           entry.trans = r.text; entry.ok = true;
           return;
         } catch (e) {
-          if (e.kind === 'auth' || e.kind === 'quota') this.cb.onNotice(e.userMessage + ' → 무료 번역으로 대신합니다.');
-          else this.cb.onNotice((e.userMessage || String(e)) + ' → 무료 번역으로 대신합니다.');
+          this.cb.onNotice((e.userMessage || String(e)) + t('fallbackFree'));
         }
       }
       entry.trans = await freeTranslate(orig, src, tgt);
       entry.ok = true;
     } catch (e) {
-      entry.trans = '[번역 실패 — 인터넷 연결을 확인하세요]';
+      entry.trans = t('translateFailed');
       entry.ok = false;
     } finally {
       this.cb.onTranslated(entry);
@@ -182,10 +182,10 @@ export class Interpreter {
 
 function micError(e) {
   const n = e && e.name;
-  if (n === 'NotAllowedError' || n === 'SecurityError') return '마이크 사용이 허용되지 않았습니다. 주소창 왼쪽 자물쇠 → 마이크 → 허용으로 바꿔 주세요.';
-  if (n === 'NotFoundError') return '마이크를 찾지 못했습니다.';
-  if (n === 'NotReadableError') return '다른 앱이 마이크를 쓰고 있습니다. 다른 앱을 닫고 다시 시도하세요.';
-  return `마이크를 열 수 없습니다: ${e && e.message ? e.message : e}`;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return t('micDenied');
+  if (n === 'NotFoundError') return t('micNotFound');
+  if (n === 'NotReadableError') return t('micBusy');
+  return t('micOther', { e: e && e.message ? e.message : String(e) });
 }
 
-export const situationWarning = (key) => (SITUATIONS[key] || {}).warning || '';
+export const situationWarning = (key) => ((SITUATIONS[key] || {}).warning ? t('hospitalWarn') : '');

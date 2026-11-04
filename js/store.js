@@ -19,7 +19,10 @@ export const DEFAULTS = {
   sensitivity: 5,
   silenceSec: 0.8,
   fontSize: 24,
-  layout: 'auto',          // auto | columns | cards
+  layout: 'auto',          // auto | stack(위·아래) | side(좌·우)
+  view: 'both',            // both | left | right (한 창만 크게)
+  flipTop: false,          // 윗창 180° 뒤집기(마주 앉은 대화)
+  uiLang: '',              // '' = 기기 언어 따라감
   onboarded: false,
 };
 
@@ -39,6 +42,11 @@ export function loadSettings() {
   s.sensitivity = Math.min(10, Math.max(1, +s.sensitivity || 5));
   s.silenceSec = Math.min(2, Math.max(0.4, +s.silenceSec || 0.8));
   s.fontSize = Math.min(48, Math.max(14, +s.fontSize || 24));
+  if (s.layout === 'columns') s.layout = 'side';
+  if (s.layout === 'cards') s.layout = 'stack';
+  if (!['auto', 'stack', 'side'].includes(s.layout)) s.layout = 'auto';
+  if (!['both', 'left', 'right'].includes(s.view)) s.view = 'both';
+  if (!['', 'ko', 'ru', 'en'].includes(s.uiLang)) s.uiLang = '';
   return s;
 }
 export const saveSettings = (s) => set(K.settings, JSON.stringify(s));

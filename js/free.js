@@ -1,5 +1,6 @@
 // 무료 모드: 브라우저 내장 음성 인식(크롬), 무료 번역, 브라우저 내장 읽기
-import { googleCode, lang } from './langs.js';
+import { langName, t } from './i18n.js';
+import { googleCode, lang, LANGS } from './langs.js';
 
 export const freeRecognitionSupported = () => !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
@@ -61,16 +62,16 @@ export class FreeRecognizer {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         this.running = false;
-        this.cb.onError?.('마이크 사용이 허용되지 않았습니다. 주소창 왼쪽 자물쇠 → 마이크 → 허용으로 바꿔 주세요.');
+        this.cb.onError?.(t('micDenied'));
         return;
       }
       if (e.error === 'language-not-supported') {
         this.running = false;
-        this.cb.onError?.(`이 브라우저의 무료 음성 인식은 ${lang(this.code).name}를 지원하지 않습니다. OpenAI 키 모드를 사용하세요.`);
+        this.cb.onError?.(t('freeLangUnsupported', { lang: langName(this.code, LANGS) }));
         return;
       }
       this.backoff = Math.min(this.backoff * 2, 8000);
-      this.cb.onError?.(`음성 인식 연결 문제(${e.error}) — 다시 연결합니다.`);
+      this.cb.onError?.(t('freeConn', { e: e.error }));
     };
     rec.onend = () => {
       this.rec = null;
