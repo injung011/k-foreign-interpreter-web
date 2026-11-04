@@ -133,3 +133,16 @@ test('openai: error kinds', async () => {
   globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(new OpenAIClient('k', 'http://mock/v1').check(), (e) => e.kind === 'network');
 });
+
+test('설정 이전: 옛 기본값 0.8초 → 1.0초, 직접 바꾼 값은 유지', async () => {
+  const mem = {};
+  globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: (k) => { delete mem[k]; } };
+  const store = await import('../js/store.js');
+  mem['kfi.settings'] = JSON.stringify({ silenceSec: 0.8 });
+  assert.equal(store.loadSettings().silenceSec, 1.0);
+  mem['kfi.settings'] = JSON.stringify({ silenceSec: 1.4 });
+  assert.equal(store.loadSettings().silenceSec, 1.4);
+  mem['kfi.settings'] = JSON.stringify({ silenceSec: 0.8, asrV: 2 });
+  assert.equal(store.loadSettings().silenceSec, 0.8);
+  assert.equal(store.loadSettings().noiseSuppression, false);
+});

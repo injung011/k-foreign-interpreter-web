@@ -101,6 +101,9 @@ def main():
                 page.click('#settingsBtn')
                 page.wait_for_timeout(400)
                 page.screenshot(path=os.path.join(OUT, f'{name}_2_settings.png'))
+                lg = page.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_log', {{headers: {{Authorization: 'Bearer sk-good'}}}}).then(r => r.json())")['log']
+                prompts = [x['fields'].get('prompt', ['(none)'])[0] for x in lg if x.get('path') == 'transcriptions']
+                state['asr_prompts'] = prompts[-2:]
                 state['logs'] = [lg for lg in logs if 'error' in lg.lower()][:10]
                 results[name] = state
                 ctx.close()

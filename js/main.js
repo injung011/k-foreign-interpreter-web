@@ -8,7 +8,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.3.1';
+export const VERSION = 'web v1.4';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -450,6 +450,7 @@ function openSettings() {
   $('voiceSel').value = s.voice;
   $('muteChk').checked = !!s.muteWhileSpeaking;
   $('sensRange').value = s.sensitivity; $('sensOut').textContent = s.sensitivity;
+  $('nsChk').checked = !!s.noiseSuppression;
   $('silRange').value = s.silenceSec; $('silOut').textContent = `${s.silenceSec}${t('sec')}`;
   $('fontRange').value = s.fontSize; $('fontOut').textContent = `${s.fontSize}px`;
   $('layoutSel').value = s.layout;
@@ -513,6 +514,7 @@ function bindSettings() {
   $('muteChk').onchange = () => { s.muteWhileSpeaking = $('muteChk').checked; save(); if (!s.muteWhileSpeaking) engine.mute(false); };
   $('sensRange').oninput = () => { s.sensitivity = +$('sensRange').value; $('sensOut').textContent = s.sensitivity; save(); applyEngine(); };
   $('silRange').oninput = () => { s.silenceSec = +$('silRange').value; $('silOut').textContent = `${s.silenceSec}${t('sec')}`; save(); applyEngine(); };
+  $('nsChk').onchange = () => { s.noiseSuppression = $('nsChk').checked; save(); if (engine.running) notice(t('restartToApply')); };
   $('fontRange').oninput = () => { s.fontSize = +$('fontRange').value; $('fontOut').textContent = `${s.fontSize}px`; save(); render(); };
   $('layoutSel').onchange = () => { s.layout = $('layoutSel').value; save(); render(); };
   $('flipChk').onchange = () => { s.flipTop = $('flipChk').checked; save(); render(); };

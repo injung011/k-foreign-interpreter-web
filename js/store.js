@@ -17,7 +17,9 @@ export const DEFAULTS = {
   readRight: false,
   muteWhileSpeaking: true,
   sensitivity: 5,
-  silenceSec: 0.8,
+  silenceSec: 1.0,
+  noiseSuppression: false, // 브라우저 잡음 제거(시끄러운 곳에서만)
+  asrV: 2,
   fontSize: 24,
   layout: 'auto',          // auto | stack(위·아래) | side(좌·우)
   view: 'both',            // both | left | right (한 창만 크게)
@@ -32,15 +34,17 @@ const del = (k) => { try { localStorage.removeItem(k); } catch (e) { /* 무시 *
 
 export function loadSettings() {
   let s = { ...DEFAULTS };
-  try { Object.assign(s, JSON.parse(get(K.settings) || '{}')); } catch (e) { /* 깨진 설정 무시 */ }
+  let saved = {};
+  try { saved = JSON.parse(get(K.settings) || '{}') || {}; Object.assign(s, saved); } catch (e) { /* 깨진 설정 무시 */ }
   for (const k of Object.keys(s)) if (!(k in DEFAULTS)) delete s[k];
+  if (!(saved.asrV >= 2)) { if (+s.silenceSec === 0.8) s.silenceSec = 1.0; s.asrV = 2; } // 옛 기본값(0.8초) → 1.0초
   if (!LANGS[s.left]) s.left = 'ko';
   if (!LANGS[s.right] || s.right === s.left) s.right = s.left === 'ru' ? 'ko' : 'ru';
   if (!SITUATIONS[s.situation]) s.situation = 'daily';
   if (!['free', 'openai', 'member'].includes(s.mode)) s.mode = 'free';
   if (!['auto', 'left', 'right'].includes(s.speaking)) s.speaking = 'auto';
   s.sensitivity = Math.min(10, Math.max(1, +s.sensitivity || 5));
-  s.silenceSec = Math.min(2, Math.max(0.4, +s.silenceSec || 0.8));
+  s.silenceSec = Math.min(2, Math.max(0.4, +s.silenceSec || 1.0));
   s.fontSize = Math.min(48, Math.max(14, +s.fontSize || 24));
   if (s.layout === 'columns') s.layout = 'side';
   if (s.layout === 'cards') s.layout = 'stack';
