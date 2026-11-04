@@ -87,10 +87,9 @@ def main():
                 page.wait_for_timeout(16000)
                 page.screenshot(path=os.path.join(OUT, f'{name}_1_running.png'))
                 state = page.evaluate("""() => {
-                    const rows = [...document.querySelectorAll('.entry')].map(e => ({
-                        caps: [...e.querySelectorAll('.cap')].map(c => c.textContent),
-                        txts: [...e.querySelectorAll('.txt')].map(c => c.textContent)}));
-                    return {rows, status: document.getElementById('statusText').textContent,
+                    const side = (d) => [...document.querySelectorAll(`.pane-body[data-side=${d}] .item`)].map(e =>
+                        e.querySelector('.cap').textContent + ' | ' + e.querySelector('.txt').textContent);
+                    return {left: side('left'), right: side('right'), status: document.getElementById('statusText').textContent,
                             usage: document.getElementById('usage').textContent,
                             warn: document.getElementById('warn').textContent,
                             running: window.__app.engine.running,
@@ -118,6 +117,56 @@ def main():
             results['free'] = page.evaluate("""() => ({
                 autoDisabled: document.querySelector('#speakingBar button[data-v=auto]').disabled,
                 welcome: !!document.querySelector('.welcome')})""")
+            ctx.close()
+
+            # 보기 전용 공유(같은 브라우저 local 전송) + 한 창 크게 + 화면 언어 + 붙여넣기
+            ctx = browser.new_context(viewport={'width': 412, 'height': 915},
+                                      permissions=['microphone', 'clipboard-read', 'clipboard-write'])
+            host = ctx.new_page()
+            host.on('pageerror', lambda e: print('HOST PAGEERROR', e))
+            host.add_init_script("if (!localStorage.getItem('kfi.settings')) {"
+                                 "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', situation:'church', uiLang:'ko'}));"
+                                 "localStorage.setItem('kfi.openaiKey', 'sk-good');}")
+            host.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1')
+            host.wait_for_timeout(600)
+            host.click('#shareBtn')
+            host.click('#shareToggle')
+            host.wait_for_timeout(400)
+            link = host.input_value('#shareLink')
+            host.screenshot(path=os.path.join(OUT, 'share_dialog.png'))
+            host.click('#shareDlg form button')
+            viewer = ctx.new_page()
+            viewer.on('pageerror', lambda e: print('VIEWER PAGEERROR', e))
+            viewer.goto(link)
+            viewer.wait_for_timeout(800)
+            host.click('#startBtn')
+            host.wait_for_timeout(14000)
+            host.click('#startBtn')
+            host.wait_for_timeout(5500)
+            host.screenshot(path=os.path.join(OUT, 'host_phone_ko.png'))
+            viewer.screenshot(path=os.path.join(OUT, 'viewer_phone.png'))
+            vs = viewer.evaluate("""() => ({
+                link: location.search,
+                viewerClass: document.body.classList.contains('viewer'),
+                bottomHidden: getComputedStyle(document.getElementById('bottomBar')).display === 'none',
+                left: document.querySelectorAll('.pane-body[data-side=left] .item').length,
+                right: document.querySelectorAll('.pane-body[data-side=right] .item').length})""")
+            vs['hostItems'] = host.evaluate("document.querySelectorAll('.pane-body .item').length")
+            vs['shareBar'] = host.text_content('#shareBar')
+            viewer.click('.expand[data-side=right]')
+            viewer.wait_for_timeout(300)
+            vs['onlyRight'] = viewer.evaluate("getComputedStyle(document.getElementById('paneLeft')).display === 'none'")
+            viewer.screenshot(path=os.path.join(OUT, 'viewer_only_right.png'))
+            host.click('#settingsBtn')
+            host.select_option('#uiLangSel', 'ru')
+            host.wait_for_timeout(300)
+            vs['ruStart'] = host.text_content('#startBtn')
+            host.evaluate("navigator.clipboard.writeText('sk-pasted-1234567890')")
+            host.click('#keyPaste')
+            host.wait_for_timeout(300)
+            vs['pasted'] = host.input_value('#keyInput')
+            host.screenshot(path=os.path.join(OUT, 'settings_ru.png'))
+            results['share'] = vs
             ctx.close()
 
             # 악성 링크 방지: 배포 주소처럼 localhost가 아닌 곳에서는 apiBase 무시되는지(함수 직접 확인)
