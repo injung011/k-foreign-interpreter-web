@@ -20,6 +20,7 @@
     <button id="shareBtn" class="icon-btn" data-i18n-title="shareTitle">📡</button>
     <button id="fontDown" class="icon-btn viewer-only" aria-label="A-" hidden>A−</button>
     <button id="fontUp" class="icon-btn viewer-only" aria-label="A+" hidden>A+</button>
+    <button id="uiBtn" class="icon-btn ui-btn" data-i18n-title="uiLangTitle">🌐 <span id="uiBtnLbl"></span></button>
     <button id="settingsBtn" class="icon-btn" data-i18n-title="settings">⚙</button>
   </header>
 
@@ -71,6 +72,13 @@
   <dialog id="langDlg" class="sheet">
     <h2 id="langDlgTitle"></h2>
     <div id="langList" class="list"></div>
+    <form method="dialog"><button class="ghost wide" data-i18n="close"></button></form>
+  </dialog>
+
+  <!-- 화면 언어 -->
+  <dialog id="uiDlg" class="sheet">
+    <h2>🌐 <span data-i18n="uiLangTitle"></span></h2>
+    <div id="uiList" class="list"></div>
     <form method="dialog"><button class="ghost wide" data-i18n="close"></button></form>
   </dialog>
 

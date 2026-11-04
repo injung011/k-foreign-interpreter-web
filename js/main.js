@@ -8,7 +8,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.2';
+export const VERSION = 'web v1.3';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -44,7 +44,7 @@ function save() {
     try { localStorage.setItem(VIEWER_KEY, JSON.stringify(keep)); } catch (e) { /* 무시 */ }
   } else store.saveSettings(s);
 }
-setUiLang(s.uiLang || defaultUiLang());
+setUiLang(s.uiLang || (IS_VIEWER && UI_LANGS[VIEW_SHOW] ? VIEW_SHOW : defaultUiLang()));
 
 // ---------------------------------------------------------------- 엔진·읽기·공유
 const engine = new Interpreter({
@@ -106,6 +106,7 @@ function langLabelEl(el, code) {
 function render() {
   applyStatic(document);
   document.title = t('title');
+  $('uiBtnLbl').textContent = { ko: '한', ru: 'RU', en: 'EN' }[uiLang()];
   document.body.classList.toggle('viewer', IS_VIEWER);
   document.documentElement.style.setProperty('--fs', `${s.fontSize}px`);
   const sit = SITUATIONS[s.situation] || SITUATIONS.daily;
@@ -575,6 +576,18 @@ function bind() {
   for (const b of $('speakingBar').querySelectorAll('button[data-v]')) {
     b.onclick = () => { if (b.disabled) return; s.speaking = b.dataset.v; save(); applyEngine(); render(); };
   }
+  $('uiBtn').onclick = () => {
+    const list = $('uiList');
+    list.innerHTML = '';
+    for (const [k, v] of Object.entries(UI_LANGS)) {
+      const b = document.createElement('button');
+      b.textContent = v;
+      if (k === uiLang()) b.className = 'cur';
+      b.onclick = () => { s.uiLang = k; setUiLang(k); save(); render(); $('uiDlg').close(); };
+      list.appendChild(b);
+    }
+    $('uiDlg').showModal();
+  };
   $('fontUp').onclick = () => { s.fontSize = Math.min(48, s.fontSize + 2); save(); render(); };
   $('fontDown').onclick = () => { s.fontSize = Math.max(14, s.fontSize - 2); save(); render(); };
   $('settingsDlg').addEventListener('close', () => { applyEngine(); render(); });
