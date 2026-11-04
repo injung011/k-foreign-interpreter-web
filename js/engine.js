@@ -2,11 +2,13 @@
 import { MicCapture } from './audio.js';
 import { FreeRecognizer, freeTranslate } from './free.js';
 import { langName, t } from './i18n.js';
-import { LANGS, sameScript } from './langs.js';
+import { lang, LANGS, sameScript } from './langs.js';
 import { OpenAIClient, OpenAIError } from './openai.js';
 import { keywords, SITUATIONS } from './situations.js';
 import { Segmenter } from './segmenter.js';
 import { clean, isHallucination, langFromText, matchesLang } from './textfilter.js';
+
+const SIT_EN = { church: 'Church service / sermon', hospital: 'Medical consultation', meeting: 'Business meeting', daily: 'Everyday', travel: 'Travel and shopping', custom: 'General' };
 
 const PROMPTS = {
   ko: '교회 예배와 간증, 병원 진료, 회의, 일상 대화를 정확히 받아 적습니다.',
@@ -52,7 +54,7 @@ export class Interpreter {
     this.muted = false;
     if (this.mode === 'openai') {
       this.seg = new Segmenter(this.s.sensitivity, this.s.silenceSec, 12);
-      this.mic = new MicCapture((b) => this._onBlock(b));
+      this.mic = new MicCapture((b) => this._onBlock(b), { noiseSuppression: !!this.s.noiseSuppression });
       try {
         const name = await this.mic.start();
         this.cb.onStatus('listening', `${t('listening')} · ${name || 'mic'}`);
@@ -117,7 +119,7 @@ export class Interpreter {
         try {
           const mode = this.speakingCode();
           const kw = keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang);
-          const r = await this.client.transcribe(samples, { mode, pair: this.pair, keywords: kw, prompt: PROMPTS[mode] || '' });
+          const r = await this.client.transcribe(samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode) });
           this.cb.onCost(r.cost);
           const text = clean(r.text);
           let code = mode !== 'auto' ? mode : (langFromText(text, this.pair) || r.lang);
@@ -143,6 +145,16 @@ export class Interpreter {
   _onFreeFinal(text, code) {
     text = clean(text);
     if (text) this._emit(text, code);
+  }
+
+  // 인식 힌트: 상황 한 줄 + 바로 앞에 받아 적은 문장(문맥). 문장이 잘려 들어와도 앞뒤를 이어 정확히 받아 적게 함.
+  _asrPrompt(mode) {
+    const langs = (mode === 'auto' ? this.pair : [mode]).map((c) => lang(c).en).join(' and ');
+    const head = `${SIT_EN[this.s.situation] || 'General'} conversation in ${langs}.` + (this.s.note ? ` Topic: ${this.s.note}.` : '');
+    const base = PROMPTS[mode] || '';
+    let prev = this.recent.slice(-2).map((r) => r.orig).join(' ');
+    if (prev.length > 300) prev = prev.slice(-300);
+    return [head, base, prev ? `Previous speech: ${prev}` : ''].filter(Boolean).join('\n');
   }
 
   _emit(text, src) {

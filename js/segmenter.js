@@ -70,7 +70,7 @@ export class Segmenter {
     const out = [];
     if (this.noise === null) {
       this.pre.push([block, level]);
-      this.pre = this.pre.slice(-4);
+      this.pre = this.pre.slice(-8);
       this.warm.push(level);
       if (this.warm.length >= 3) { this.noise = Math.max(1e-5, Math.min(Math.min(...this.warm), 0.006)); this.warm = []; }
       return { utterances: out, level, threshold: this.threshold, active: false };
@@ -80,7 +80,7 @@ export class Segmenter {
     if (!this.active) {
       if (!loud) this._updateNoise(level);
       this.pre.push([block, level]);
-      this.pre = this.pre.slice(-4);
+      this.pre = this.pre.slice(-8);
       this.loudRun = loud ? this.loudRun + 1 : 0;
       if (this.loudRun >= 2) {
         this.active = true;

@@ -81,7 +81,7 @@ export class OpenAIClient {
         langs.forEach((l) => fd.append('languages[]', l));
         keywords.forEach((k) => fd.append('keywords[]', k));
       } else if (langs.length === 1) fd.append('language', langs[0]);
-      if (langs.length === 1 && prompt) fd.append('prompt', prompt);
+      if (prompt) fd.append('prompt', prompt);
       try {
         const res = await this._fetch('/audio/transcriptions', { method: 'POST', body: fd }, 30000);
         const js = await res.json();

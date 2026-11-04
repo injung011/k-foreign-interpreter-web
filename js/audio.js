@@ -2,16 +2,17 @@
 import { Reblocker, Resampler, SR } from './segmenter.js';
 
 export class MicCapture {
-  constructor(onBlock) {
+  constructor(onBlock, { noiseSuppression = false } = {}) {
     this.onBlock = onBlock;
+    this.ns = noiseSuppression;
     this.ctx = null;
     this.stream = null;
   }
 
   async start() {
     this.stream = await navigator.mediaDevices.getUserMedia({
-      // 브라우저 에코 제거: 스피커로 읽어 주는 소리가 다시 인식되는 것을 줄임
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      // 에코 제거는 유지(스피커로 읽어 주는 소리가 다시 인식되는 것 방지). 잡음 제거는 목소리를 뭉개서 기본 끔.
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: this.ns, autoGainControl: true },
     });
     let ctx;
     try { ctx = new AudioContext({ sampleRate: SR }); } catch (e) { ctx = new AudioContext(); }

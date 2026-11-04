@@ -67,6 +67,8 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._auth():
             return
+        if self.path.endswith('/_log'):
+            return _ok(self, {'log': LOG[-50:]})
         if self.path.endswith('/models'):
             _ok(self, {'data': [{'id': 'gpt-transcribe'}, {'id': 'gpt-6-luna'}]})
         else:
