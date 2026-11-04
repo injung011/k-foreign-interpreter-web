@@ -8,13 +8,16 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.1';
+export const VERSION = 'web v1.2';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
 const VIEW_ROOM = (params.get('view') || '').replace(/[^a-z0-9]/g, '').slice(0, 32);
 const IS_VIEWER = !!VIEW_ROOM;
 const VIEW_VIA = params.get('via') === 'local' ? 'local' : 'supabase';
+const VIEW_SHOW = LANGS[params.get('show')] ? params.get('show') : '';
+let viewPicked = false; // 보는 사람이 직접 ⤢를 누르면 링크 지정보다 우선
+let shareShow = 'both';
 
 // ---------------------------------------------------------------- 상태
 const VIEWER_KEY = 'kfi.viewer';
@@ -366,16 +369,27 @@ function openSitPicker() {
 
 // ---------------------------------------------------------------- 공유
 function shareLink() {
-  return `${location.origin}${location.pathname}?view=${share.room}${share.kind === 'local' ? '&via=local' : ''}`;
+  return `${location.origin}${location.pathname}?view=${share.room}${share.kind === 'local' ? '&via=local' : ''}`
+    + (shareShow !== 'both' ? `&show=${shareShow}` : '');
 }
 
 function renderShareDlg() {
   const on = share.active;
   $('shareToggle').textContent = on ? t('shareStop') : t('shareStart');
-  $('shareMode').textContent = supabaseConfigured() ? '' : t('shareNotReady')
-    + (uiLang() === 'ko' ? ' 지금은 같은 기기의 다른 창(예: 빔프로젝터용 창)에서만 볼 수 있습니다.'
-      : uiLang() === 'ru' ? ' Сейчас просмотр возможен только в другом окне этого же устройства.'
-        : ' For now it works only in another window on this same device.');
+  $('shareMode').textContent = supabaseConfigured() ? '' : t('shareNotReady') + ' ' + t('shareLocalOnly');
+  const seg = $('shareFor');
+  seg.innerHTML = '';
+  if (shareShow !== 'both' && shareShow !== s.left && shareShow !== s.right) shareShow = 'both';
+  for (const [v, label] of [['both', t('shareBoth')], [s.left, t('shareOnly', { lang: langName(s.left, LANGS) })],
+    [s.right, t('shareOnly', { lang: langName(s.right, LANGS) })]]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.dataset.show = v;
+    b.setAttribute('aria-pressed', String(shareShow === v));
+    b.onclick = () => { shareShow = v; renderShareDlg(); };
+    seg.appendChild(b);
+  }
   $('shareLinkBox').hidden = !on;
   if (on) {
     const link = shareLink();
@@ -536,9 +550,9 @@ function bind() {
   document.querySelectorAll('.pname').forEach((b) => { b.onclick = () => openLangPicker(b.dataset.side); });
   document.querySelectorAll('.read').forEach((b) => { b.onclick = () => toggleRead(b.dataset.side); });
   document.querySelectorAll('.expand').forEach((b) => {
-    b.onclick = () => { s.view = s.view === b.dataset.side ? 'both' : b.dataset.side; save(); render(); };
+    b.onclick = () => { viewPicked = true; s.view = s.view === b.dataset.side ? 'both' : b.dataset.side; save(); render(); };
   });
-  $('bothBtn').onclick = () => { s.view = 'both'; save(); render(); };
+  $('bothBtn').onclick = () => { viewPicked = true; s.view = 'both'; save(); render(); };
   $('swapBtn').onclick = () => {
     [s.left, s.right] = [s.right, s.left];
     [s.readLeft, s.readRight] = [s.readRight, s.readLeft];
@@ -562,6 +576,10 @@ async function startViewer() {
     onState: (st) => {
       const changed = st.left !== s.left || st.right !== s.right || st.situation !== s.situation || st.note !== s.note;
       Object.assign(s, { left: st.left, right: st.right, situation: st.situation, note: st.note || '' });
+      if (VIEW_SHOW && !viewPicked) {
+        const want = VIEW_SHOW === s.left ? 'left' : VIEW_SHOW === s.right ? 'right' : 'both';
+        if (want !== s.view) { s.view = want; render(); return; }
+      }
       if (changed) render();
     },
     onStatus: (st) => {
