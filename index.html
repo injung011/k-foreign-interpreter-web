@@ -17,6 +17,7 @@
     <span id="viewerBadge" class="badge" data-i18n="viewerBadge" hidden></span>
     <span class="grow"></span>
     <span id="usage" class="usage"></span>
+    <button id="scriptBtn" class="icon-btn host-only script-btn" data-i18n-title="scriptTitle">📜</button>
     <button id="shareBtn" class="icon-btn" data-i18n-title="shareTitle">📡</button>
     <button id="fontDown" class="icon-btn viewer-only" aria-label="A-" hidden>A−</button>
     <button id="fontUp" class="icon-btn viewer-only" aria-label="A+" hidden>A+</button>
@@ -91,6 +92,27 @@
       <input id="noteInput" type="text" maxlength="200" data-i18n-ph="notePh">
     </label>
     <form method="dialog" class="row-end"><button class="primary" id="sitDone" data-i18n="ok"></button></form>
+  </dialog>
+
+  <!-- 대본 모드 -->
+  <dialog id="scriptDlg" class="sheet">
+    <h2>📜 <span data-i18n="scriptTitle"></span></h2>
+    <p class="hint" data-i18n-html="scriptDesc"></p>
+    <p id="scriptInfo" class="script-info"></p>
+    <div class="row">
+      <label class="ghost filebtn"><input id="scriptFile" type="file" accept=".txt,text/plain" hidden><span data-i18n="scriptFile"></span></label>
+    </div>
+    <textarea id="scriptText" rows="4" data-i18n-ph="scriptPh"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="scriptLoad" class="ghost" type="button" data-i18n="scriptLoad"></button>
+      <button id="scriptClear" class="ghost danger" type="button" data-i18n="scriptClear"></button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="scriptToggle" class="primary" type="button"></button>
+      <button id="scriptReset" class="ghost" type="button" data-i18n="scriptReset"></button>
+      <form method="dialog"><button class="ghost" data-i18n="close"></button></form>
+    </div>
+    <p class="hint" data-i18n="scriptTip"></p>
   </dialog>
 
   <!-- 공유 -->

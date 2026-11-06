@@ -98,8 +98,8 @@ export class OpenAIClient {
   }
 
   // 반환 { text, model, cost }
-  async translate(text, src, tgt, { situation = 'daily', note = '', context = [] } = {}) {
-    const instructions = translateInstructions(src, tgt, situation, note);
+  async translate(text, src, tgt, { situation = 'daily', note = '', context = [], glossary = '' } = {}) {
+    const instructions = translateInstructions(src, tgt, situation, note, glossary);
     const dir = `${lang(src).en} → ${lang(tgt).en} (${lang(tgt).native})`;
     const ctx = context.filter(Boolean).slice(-3);
     const user = (ctx.length ? `Previous sentences (context only, do NOT translate):\n${ctx.join('\n')}\n\n` : '') + `Translate ${dir}:\n${text}`;

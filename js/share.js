@@ -3,6 +3,7 @@
 //   supabase : Supabase Realtime 방송(다른 기기끼리). config.js 설정 필요.
 //   local    : 같은 브라우저의 다른 창/탭(BroadcastChannel). 서버 없이 동작 — 노트북에서 빔프로젝터용 창을 따로 띄울 때.
 // 메시지: host→ {t:'state'} {t:'entry', e} {t:'snapshot', entries, state} {t:'end'} / viewer→ {t:'join', v}
+//         대본 모드: host→ {t:'script', id, part, parts, langs, segs} (조각으로 나눠 보냄) {t:'pos', i}
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './config.js';
 
 export const supabaseConfigured = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -61,9 +62,10 @@ const transportFor = (kind) => (kind === 'supabase' ? new SupabaseTransport() : 
 
 // ---------------------------------------------------------------- 통역하는 쪽
 export class ShareHost {
-  constructor({ getSnapshot, onViewers }) {
+  constructor({ getSnapshot, onViewers, onJoin }) {
     this.getSnapshot = getSnapshot; // () => { entries, state }
     this.onViewers = onViewers;
+    this.onJoin = onJoin;
     this.viewers = new Map();
     this.room = null;
     this.kind = null;
@@ -92,7 +94,7 @@ export class ShareHost {
     const isNew = !this.viewers.has(m.v);
     this.viewers.set(m.v, Date.now());
     if (isNew) this.onViewers(this.viewers.size);
-    if (m.first) this.send({ t: 'snapshot', ...this.getSnapshot() });
+    if (m.first) { this.send({ t: 'snapshot', ...this.getSnapshot() }); if (this.onJoin) this.onJoin(); }
   }
 
   send(m) { if (this.tr) this.tr.send(m); }
@@ -112,12 +114,12 @@ export class ShareHost {
 }
 
 // 보내는 항목: 화면 표시에 필요한 것만(키·설정 등은 절대 보내지 않음)
-export const publicEntry = (e) => ({ id: e.id, src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok, pair: e.pair, time: e.time });
+export const publicEntry = (e) => ({ id: e.id, src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok, pair: e.pair, time: e.time, at: e.at });
 
 // ---------------------------------------------------------------- 보는 쪽
 export class ShareViewer {
-  constructor({ onEntry, onState, onStatus }) {
-    this.cb = { onEntry, onState, onStatus };
+  constructor({ onEntry, onState, onStatus, onOther }) {
+    this.cb = { onEntry, onState, onStatus, onOther };
     this.id = newRoomId();
   }
 
@@ -144,6 +146,15 @@ export class ShareViewer {
       for (const e of m.entries || []) this.cb.onEntry(e);
       this.cb.onStatus('live');
     }
+    if ((m.t === 'script' || m.t === 'pos') && this.cb.onOther) { this.cb.onOther(m); this.cb.onStatus('live'); }
+  }
+
+  // 처음 받는 것처럼 다시 요청(대본을 못 받았을 때)
+  requestSnapshot() {
+    const now = Date.now();
+    if (this.lastReq && now - this.lastReq < 4000) return;
+    this.lastReq = now;
+    if (this.tr) this.tr.send({ t: 'join', v: this.id, first: true });
   }
 
   close() { clearInterval(this.pulse); if (this.tr) this.tr.close(); }

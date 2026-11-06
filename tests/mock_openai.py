@@ -14,6 +14,7 @@ from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = []   # 받은 요청 기록(시험에서 확인)
+QUEUE = []  # 시험에서 정해 둔 '들린 말' 목록(POST /v1/_queue {"texts": [...]}) — 있으면 차례로 돌려줌
 
 
 def _cors(h):
@@ -79,6 +80,9 @@ class H(BaseHTTPRequestHandler):
             return
         n = int(self.headers.get('Content-Length', 0))
         raw = self.rfile.read(n)
+        if self.path.endswith('/_queue'):
+            QUEUE[:] = json.loads(raw).get('texts', [])
+            return _ok(self, {'n': len(QUEUE)})
         if self.path.endswith('/audio/transcriptions'):
             return self._transcribe(raw)
         if self.path.endswith('/responses'):
@@ -110,6 +114,13 @@ class H(BaseHTTPRequestHandler):
             return _err(self, 400, 'invalid_request_error', 'use languages, not language')
         if secs < 1.2:   # 시험음/짧은 소리
             return _ok(self, {'text': '', 'languages': []})
+        if QUEUE:
+            text = QUEUE.pop(0)
+            lang = 'ko' if any('\uac00' <= c <= '\ud7a3' for c in text) else 'ru'
+            out = {'text': text}
+            if model == 'gpt-transcribe':
+                out['languages'] = [{'code': lang}]
+            return _ok(self, out)
         H.counter[0] += 1
         langs = fields.get('languages[]') or fields.get('language') or ['ko', 'ru']
         lang = langs[(H.counter[0] - 1) % len(langs)]
