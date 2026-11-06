@@ -25,6 +25,8 @@ export const DEFAULTS = {
   view: 'both',            // both | left | right (한 창만 크게)
   flipTop: false,          // 윗창 180° 뒤집기(마주 앉은 대화)
   uiLang: '',              // '' = 기기 언어 따라감
+  scriptOn: false,         // 대본 모드
+  scriptCur: -1,           // 대본에서 지금 위치(새로고침해도 이어서)
   onboarded: false,
 };
 
@@ -51,6 +53,8 @@ export function loadSettings() {
   if (!['auto', 'stack', 'side'].includes(s.layout)) s.layout = 'auto';
   if (!['both', 'left', 'right'].includes(s.view)) s.view = 'both';
   if (!['', 'ko', 'ru', 'en'].includes(s.uiLang)) s.uiLang = '';
+  s.scriptOn = !!s.scriptOn;
+  s.scriptCur = Number.isInteger(s.scriptCur) ? s.scriptCur : -1;
   return s;
 }
 export const saveSettings = (s) => set(K.settings, JSON.stringify(s));

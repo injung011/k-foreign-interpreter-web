@@ -3,12 +3,13 @@ import { freeRecognitionSupported } from './free.js';
 import { applyStatic, defaultUiLang, langName, setUiLang, t, UI_LANGS, uiLang } from './i18n.js';
 import { lang, LANGS } from './langs.js';
 import { OpenAIClient } from './openai.js';
+import { glossaryKeywords, glossaryText, parseScript, ScriptTracker } from './script.js';
 import { publicEntry, ShareHost, ShareViewer, supabaseConfigured } from './share.js';
 import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.4';
+export const VERSION = 'web v1.5';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -37,6 +38,13 @@ let unmuteTimer = null;
 let level = [0, 0, false, 0];
 let noticeTimer = null;
 let viewerStatus = 'wait';
+// 대본 모드
+const SCRIPT_KEY = 'kfi.script';
+let script = null;      // { id, name, segs:[{i,n,t:{ko,ru}}], terms, langs }
+let tracker = null;
+let lastUserScroll = 0;
+let viewerParts = null; // 보는 쪽: 나눠서 받는 대본 조각
+const scriptActive = () => !!(script && s.scriptOn);
 
 function save() {
   if (IS_VIEWER) {
@@ -56,6 +64,10 @@ const engine = new Interpreter({
   onNotice: notice,
   onCost: addCost,
   onStopped: () => { setRunning(false); setStatus('idle', t('stopped')); },
+  claim: claimScript,
+  asrHint: () => (scriptActive() ? tracker.upcoming(500) : ''),
+  asrKeywords: () => (scriptActive() ? [...glossaryKeywords(script.terms, 'a', 40), ...glossaryKeywords(script.terms, 'b', 20)] : []),
+  glossary: () => (scriptActive() ? glossaryText(script.terms) : ''),
 });
 const speaker = new Speaker({
   onStart: (item) => {
@@ -79,8 +91,10 @@ const speaker = new Speaker({
 const share = new ShareHost({
   getSnapshot: () => ({ entries: [...entries.values()].slice(-30).map(publicEntry), state: publicState() }),
   onViewers: (n) => renderShareBar(n),
+  onJoin: () => sendScript(),
 });
-const publicState = () => ({ left: s.left, right: s.right, situation: s.situation, note: s.note });
+const publicState = () => ({ left: s.left, right: s.right, situation: s.situation, note: s.note,
+  scriptOn: scriptActive(), scriptId: script ? script.id : null, cur: tracker ? tracker.cur : -1 });
 
 function applyEngine() {
   if (IS_VIEWER) { speaker.configure(null, s.voice); return; }
@@ -142,7 +156,8 @@ function render() {
   $('startBtn').textContent = engine.running ? t('stop') : t('start');
   if (!engine.running && !IS_VIEWER && $('statusText').dataset.idle !== '0') $('statusText').textContent = t('ready');
   renderShareBar(share.viewers.size);
-  if (!entries.size) renderEmpty();
+  $('scriptBtn').classList.toggle('on', scriptActive());
+  if (!scriptView() && !entries.size) renderEmpty();
 }
 
 function renderEmpty() {
@@ -186,7 +201,7 @@ function clearEmpty() {
 
 function addEntry(e) {
   clearEmpty();
-  const follow = { left: atBottom('left'), right: atBottom('right') };
+  const follow = scriptView() ? { left: false, right: false } : { left: atBottom('left'), right: atBottom('right') };
   const srcSide = sideOf(e, e.src);
   const trSide = srcSide === 'left' ? 'right' : 'left';
   const src = makeItem(true, e.src);
@@ -194,12 +209,19 @@ function addEntry(e) {
   const tr = makeItem(false, e.tgt);
   tr.querySelector('.txt').textContent = '…';
   tr.addEventListener('dblclick', () => e.ok && speaker.say(e.trans, e.tgt, e.id));
-  for (const [side, el] of [[srcSide, src], [trSide, tr]]) {
-    const body = paneBody(side);
-    body.insertBefore(el, body.querySelector('.interim'));
-  }
   e.srcEl = src;
   e.trEl = tr;
+  if (scriptView() && e.at !== undefined) {
+    // 대본에 없는 말: 지금 구간 바로 뒤(앞서 끼운 말들 다음)에 파란 글씨로
+    src.querySelector('.cap').textContent = t('scriptAdlib');
+    for (const [side, el] of [[srcSide, src], [trSide, tr]]) placeAdlib(paneBody(side), el, e.at);
+    revealAdlib(src, tr);
+  } else {
+    for (const [side, el] of [[srcSide, src], [trSide, tr]]) {
+      const body = paneBody(side);
+      body.insertBefore(el, body.querySelector('.interim'));
+    }
+  }
   entries.set(e.id, e);
   while (entries.size > MAX_ROWS) {
     const [id, old] = entries.entries().next().value;
@@ -217,10 +239,10 @@ function setTranslation(e) {
     tr.querySelector('.cap').textContent = `${t('ai')}${e.ok ? '' : ' · ' + t('failed')}`;
     tr.querySelector('.txt').textContent = e.trans;
     const side = tr.parentElement && tr.parentElement.dataset.side;
-    if (side && atBottom(side, 240)) scrollBottom(side);
+    if (side && !scriptView() && atBottom(side, 240)) scrollBottom(side);
   }
   if (!IS_VIEWER) {
-    store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok });
+    store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok, ...(e.at !== undefined ? { adlib: true } : {}) });
     if (share.active) share.entry(e);
   }
   const side = sideOf(e, e.tgt);
@@ -251,6 +273,7 @@ function markSpeaking(id, on) {
 }
 
 function showInterim(text, code) {
+  if (scriptView()) { if (text) $('statusText').textContent = '… ' + text; return; }
   document.querySelectorAll('.interim').forEach((x) => { if (!text || x.dataset.code !== code) x.remove(); });
   if (!text) return;
   const side = code === s.left ? 'left' : 'right';
@@ -438,6 +461,240 @@ async function toggleShare() {
   renderShareBar(share.viewers.size);
 }
 
+// ---------------------------------------------------------------- 대본 모드
+const scriptView = () => !!(script && s.scriptOn);
+const segSide = (code) => (code === s.left ? 'left' : code === s.right ? 'right' : null);
+
+function setScript(sc, persist = true) {
+  script = sc;
+  tracker = sc ? new ScriptTracker(sc.segs, sc.langs[0]) : null;
+  if (tracker) tracker.cur = Math.max(-1, Math.min(+s.scriptCur || -1, sc.segs.length - 1));
+  if (!persist || IS_VIEWER) return true;
+  try {
+    if (sc) localStorage.setItem(SCRIPT_KEY, JSON.stringify(sc)); else localStorage.removeItem(SCRIPT_KEY);
+    return true;
+  } catch (e) { notice(t('scriptTooBig')); return false; }
+}
+
+function loadSavedScript() {
+  if (IS_VIEWER) return;
+  try { const j = JSON.parse(localStorage.getItem(SCRIPT_KEY) || 'null'); if (j && j.segs && j.segs.length) setScript(j, false); } catch (e) { /* 무시 */ }
+}
+
+// 들은 말이 대본에 있으면 그 구간으로 옮기고 true(번역 생략), 없으면 false(파란 글씨로 AI 번역)
+function claimScript(e) {
+  if (!scriptActive()) return false;
+  e.at = tracker.cur;
+  if (e.src !== script.langs[0]) return false;
+  const m = tracker.match(e.orig);
+  if (m) {
+    setScriptCur(m.idx, { heard: e.orig });
+    const seg = script.segs[m.idx];
+    store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: seg.t[e.tgt] || '', ok: true, script: seg.n });
+    return true;
+  }
+  if (e.orig.replace(/[^\p{L}\p{N}]/gu, '').length < 8) return true; // "자", "네", "그러니까" 같은 짧은 군말은 무시
+  return false;
+}
+
+function setScriptCur(i, { heard = '', broadcast = true } = {}) {
+  if (!tracker) return;
+  i = Math.max(-1, Math.min(i, script.segs.length - 1));
+  const moved = i !== tracker.cur;
+  tracker.cur = i;
+  if (!IS_VIEWER) { s.scriptCur = i; save(); }
+  applyScriptCur(true);
+  if (heard && i >= 0) setStatus('listening', `🎯 ${script.segs[i].n} · ${heard.slice(0, 40)}`);
+  if (broadcast && share.active) share.send({ t: 'pos', i });
+  // 소리로 읽기가 켜진 언어는 새 구간이 되면 준비된 번역을 읽음
+  if (moved && i >= 0 && !IS_VIEWER) {
+    for (const code of script.langs) {
+      if (code === script.langs[0]) continue;
+      const side = segSide(code);
+      if (side && (side === 'left' ? s.readLeft : s.readRight) && script.segs[i].t[code]) speaker.say(script.segs[i].t[code], code, 'seg' + i);
+    }
+  }
+}
+
+function isHeading(text) { return /^\s*\d+[.)]\s/.test(text) && text.length < 60; }
+
+function renderScriptView() {
+  for (const side of ['left', 'right']) {
+    const body = paneBody(side);
+    body.innerHTML = '';
+    body.classList.add('script');
+    const code = sideLang(side);
+    const frag = document.createDocumentFragment();
+    for (const seg of script.segs) {
+      const d = document.createElement('div');
+      d.className = 'seg' + (isHeading(seg.t[script.langs[0]] || '') ? ' head' : '');
+      d.dataset.i = seg.i;
+      d.textContent = seg.t[code] || '';
+      frag.appendChild(d);
+    }
+    body.appendChild(frag);
+    if (!script.langs.includes(code)) {
+      const w = document.createElement('div');
+      w.className = 'placeholder';
+      w.textContent = t('scriptLangMissing', { lang: langName(code, LANGS) });
+      body.prepend(w);
+    }
+  }
+  for (const e of entries.values()) {
+    if (e.at === undefined) continue;
+    placeAdlib(paneBody(sideOf(e, e.src)), e.srcEl, e.at);
+    placeAdlib(paneBody(sideOf(e, e.tgt)), e.trEl, e.at);
+  }
+  applyScriptCur(false, true);
+}
+
+function placeAdlib(body, el, at) {
+  el.classList.add('adlib');
+  el.dataset.at = at;
+  const next = body.querySelector(`.seg[data-i="${at + 1}"]`);
+  body.insertBefore(el, next);
+}
+
+function revealAdlib(...els) {
+  if (Date.now() - lastUserScroll < 6000) return;
+  for (const el of els) {
+    const body = el.parentElement;
+    if (!body) continue;
+    const top = el.offsetTop - body.clientHeight * 0.3;
+    if (el.offsetTop + el.offsetHeight > body.scrollTop + body.clientHeight - 20) body.scrollTo({ top, behavior: 'smooth' });
+  }
+}
+
+function applyScriptCur(smooth, force = false) {
+  if (!scriptView()) return;
+  const cur = tracker.cur;
+  for (const side of ['left', 'right']) {
+    const body = paneBody(side);
+    for (const el of body.children) {
+      if (el.classList.contains('seg')) {
+        const i = +el.dataset.i;
+        el.classList.toggle('past', i < cur);
+        el.classList.toggle('now', i === cur);
+      } else if (el.classList.contains('adlib')) el.classList.toggle('past', +el.dataset.at < cur);
+    }
+    if (!force && Date.now() - lastUserScroll < 6000) continue; // 직접 스크롤해 보는 중이면 잠시 그대로
+    const target = body.querySelector(`.seg[data-i="${Math.max(0, cur)}"]`);
+    if (target) body.scrollTo({ top: Math.max(0, target.offsetTop - body.clientHeight * 0.25), behavior: smooth ? 'smooth' : 'auto' });
+  }
+}
+
+// 대본 화면 ↔ 일반 화면 바꾸기(받은 말은 그대로 둠)
+function rebuildPanes() {
+  for (const side of ['left', 'right']) { const b = paneBody(side); b.innerHTML = ''; b.classList.remove('script'); }
+  if (scriptView()) { renderScriptView(); return; }
+  for (const e of entries.values()) {
+    e.srcEl.classList.remove('adlib', 'past');
+    e.trEl.classList.remove('adlib', 'past');
+    paneBody(sideOf(e, e.src)).appendChild(e.srcEl);
+    paneBody(sideOf(e, e.tgt)).appendChild(e.trEl);
+  }
+  if (!entries.size) renderEmpty();
+}
+
+function sendScript() {
+  if (!script || !share.active) return;
+  const now = Date.now();
+  if (sendScript.last && now - sendScript.last < 2000) return; // 여러 명이 동시에 들어와도 한 번만
+  sendScript.last = now;
+  const PART = 25;
+  const parts = Math.ceil(script.segs.length / PART);
+  for (let k = 0; k < parts; k++) {
+    share.send({ t: 'script', id: script.id, part: k, parts, langs: script.langs,
+      segs: script.segs.slice(k * PART, (k + 1) * PART).map((x) => ({ i: x.i, n: x.n, t: x.t })) });
+  }
+  share.send({ t: 'state', state: publicState() });
+}
+
+function viewerScriptMsg(m) {
+  if (m.t === 'pos') { if (tracker) setScriptCur(m.i, { broadcast: false }); return; }
+  if (m.t !== 'script') return;
+  if (script && script.id === m.id) return;
+  if (!viewerParts || viewerParts.id !== m.id) viewerParts = { id: m.id, parts: new Array(m.parts), langs: m.langs };
+  viewerParts.parts[m.part] = m.segs;
+  if (viewerParts.parts.every(Boolean)) {
+    setScript({ id: m.id, segs: viewerParts.parts.flat(), terms: [], langs: viewerParts.langs }, false);
+    viewerParts = null;
+    tracker.cur = s.viewerCur ?? -1;
+    rebuildPanes();
+  }
+}
+
+function openScriptDlg() {
+  renderScriptDlg();
+  $('scriptDlg').showModal();
+}
+
+function renderScriptDlg() {
+  $('scriptInfo').textContent = script
+    ? t('scriptInfo', { name: script.name || '', n: script.segs.length, m: script.terms.length, cur: tracker.cur >= 0 ? script.segs[tracker.cur].n : '-' })
+    : t('scriptNone');
+  $('scriptToggle').textContent = s.scriptOn ? t('scriptOff') : t('scriptOn');
+  $('scriptToggle').disabled = !script;
+  $('scriptReset').disabled = !script;
+  $('scriptClear').disabled = !script;
+}
+
+function loadScriptText(text, name) {
+  let sc;
+  try { sc = parseScript(text); } catch (e) { $('scriptInfo').textContent = t('scriptParseFail'); return; }
+  sc.name = (name || '').replace(/\.[^.]+$/, '').slice(0, 60);
+  sc.id = Math.random().toString(36).slice(2, 10);
+  s.scriptCur = -1;
+  if (!setScript(sc)) return;
+  const [a, b] = sc.langs;
+  if (LANGS[a] && LANGS[b]) { s.left = a; s.right = b; }
+  s.scriptOn = true;
+  save(); applyEngine(); render(); rebuildPanes();
+  if (share.active) { sendScript.last = 0; sendScript(); }
+  $('scriptText').value = '';
+  renderScriptDlg();
+  notice(t('scriptLoaded', { n: sc.segs.length }));
+}
+
+function bindScript() {
+  $('scriptBtn').onclick = openScriptDlg;
+  $('scriptFile').onchange = async () => {
+    const f = $('scriptFile').files[0];
+    if (!f) return;
+    loadScriptText(await f.text(), f.name);
+    $('scriptFile').value = '';
+  };
+  $('scriptLoad').onclick = () => { if ($('scriptText').value.trim()) loadScriptText($('scriptText').value, ''); };
+  $('scriptToggle').onclick = () => {
+    s.scriptOn = !s.scriptOn; save(); render(); rebuildPanes(); renderScriptDlg();
+    if (share.active) share.send({ t: 'state', state: publicState() });
+  };
+  $('scriptReset').onclick = () => { setScriptCur(-1); renderScriptDlg(); };
+  $('scriptClear').onclick = () => {
+    if (!confirm(t('scriptConfirmClear'))) return;
+    s.scriptOn = false; s.scriptCur = -1; setScript(null); save(); render(); rebuildPanes(); renderScriptDlg();
+    if (share.active) share.send({ t: 'state', state: publicState() });
+  };
+  // 구간을 누르면 그 위치로(진행자가 바로잡기)
+  for (const side of ['left', 'right']) {
+    const body = paneBody(side);
+    body.addEventListener('click', (ev) => {
+      if (IS_VIEWER || !scriptView()) return;
+      const seg = ev.target.closest('.seg');
+      if (seg) { lastUserScroll = 0; setScriptCur(+seg.dataset.i); }
+    });
+    for (const ev of ['wheel', 'touchmove']) body.addEventListener(ev, () => { if (scriptView()) lastUserScroll = Date.now(); }, { passive: true });
+  }
+  // ↓/→/PageDown 다음 구간, ↑/←/PageUp 앞 구간
+  document.addEventListener('keydown', (ev) => {
+    if (IS_VIEWER || !scriptView() || document.querySelector('dialog[open]')) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
+    const k = ev.key;
+    if (['ArrowDown', 'ArrowRight', 'PageDown'].includes(k)) { ev.preventDefault(); lastUserScroll = 0; setScriptCur(tracker.cur + 1); }
+    if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(k)) { ev.preventDefault(); lastUserScroll = 0; setScriptCur(tracker.cur - 1); }
+  });
+}
+
 // ---------------------------------------------------------------- 설정 화면
 function openSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) r.checked = r.value === s.mode;
@@ -594,15 +851,22 @@ function bind() {
   $('fontDown').onclick = () => { s.fontSize = Math.max(14, s.fontSize - 2); save(); render(); };
   $('settingsDlg').addEventListener('close', () => { applyEngine(); render(); });
   bindSettings();
+  bindScript();
 }
 
 // ---------------------------------------------------------------- 보기 전용
 async function startViewer() {
   const viewer = new ShareViewer({
     onEntry: upsertViewerEntry,
+    onOther: viewerScriptMsg,
     onState: (st) => {
-      const changed = st.left !== s.left || st.right !== s.right || st.situation !== s.situation || st.note !== s.note;
-      Object.assign(s, { left: st.left, right: st.right, situation: st.situation, note: st.note || '' });
+      const modeChanged = !!st.scriptOn !== !!s.scriptOn;
+      const changed = modeChanged || st.left !== s.left || st.right !== s.right || st.situation !== s.situation || st.note !== s.note;
+      Object.assign(s, { left: st.left, right: st.right, situation: st.situation, note: st.note || '', scriptOn: !!st.scriptOn });
+      s.viewerCur = st.cur;
+      if (st.scriptOn && st.scriptId && (!script || script.id !== st.scriptId) && !viewerParts) window.__viewer && window.__viewer.requestSnapshot();
+      if (script && st.scriptId === script.id && tracker.cur !== st.cur) setScriptCur(st.cur, { broadcast: false });
+      if (modeChanged || (changed && scriptView())) { render(); rebuildPanes(); }
       if (VIEW_SHOW && !viewPicked) {
         const want = VIEW_SHOW === s.left ? 'left' : VIEW_SHOW === s.right ? 'right' : 'both';
         if (want !== s.view) { s.view = want; render(); return; }
@@ -621,9 +885,11 @@ async function startViewer() {
   window.__viewer = viewer;
 }
 
+loadSavedScript();
 bind();
 applyEngine();
 render();
+if (scriptView()) rebuildPanes();
 drawMeter();
 if (IS_VIEWER) startViewer();
 else setStatus('idle', t('ready'));
@@ -640,4 +906,4 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
 }
 // 시험용
-window.__app = { engine, speaker, entries, share, get settings() { return s; } };
+window.__app = { engine, speaker, entries, share, get settings() { return s; }, get script() { return script; }, get tracker() { return tracker; }, loadScriptText };

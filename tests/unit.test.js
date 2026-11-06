@@ -146,3 +146,32 @@ test('설정 이전: 옛 기본값 0.8초 → 1.0초, 직접 바꾼 값은 유�
   assert.equal(store.loadSettings().silenceSec, 0.8);
   assert.equal(store.loadSettings().noiseSuppression, false);
 });
+
+test('대본: 형식 읽기(여러 줄, 계속 표시, 용어표)', async () => {
+  const { parseScript, glossaryKeywords } = await import('../js/script.js');
+  const sc = parseScript(`[1]\nKO: 1. 첫 제목\nRU: 1. Первый заголовок\n\n[2]\nKO: 하나님은 사랑이십니다.\n이어지는 줄입니다.\nRU: Бог есть любовь.\n— 계속 —\n[3]\nKO: 감사합니다.\nRU: Благодарю вас.\n\n용어표\n하나님 = Бог\n예수님 / 예수 그리스도 = Иисус / Иисус Христос\n`);
+  assert.equal(sc.segs.length, 3);
+  assert.deepEqual(sc.langs, ['ko', 'ru']);
+  assert.equal(sc.segs[1].t.ko, '하나님은 사랑이십니다. 이어지는 줄입니다.');
+  assert.equal(sc.terms.length, 2);
+  assert.deepEqual(glossaryKeywords(sc.terms, 'a'), ['하나님', '예수님', '예수 그리스도']);
+  assert.throws(() => parseScript('그냥 글'), /format/);
+});
+
+test('대본: 위치 따라가기 — 말 바꿈·오타는 따라가고, 대본에 없는 말은 구분', async () => {
+  const { parseScript, ScriptTracker } = await import('../js/script.js');
+  const lines = ['오늘 본문은 요한복음 삼장 십육절입니다', '하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니', '이는 그를 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라',
+    '우리는 이 사랑을 받은 사람들입니다', '그렇다면 우리는 어떻게 살아야 할까요', '이웃을 내 몸과 같이 사랑해야 합니다', '말로만 하지 말고 행함과 진실함으로 사랑합시다',
+    '이것이 오늘 말씀의 결론입니다', '함께 기도하겠습니다'];
+  const sc = parseScript(lines.map((k, i) => `[${i + 1}]\nKO: ${k}\nRU: ru ${i}`).join('\n\n'));
+  const tr = new ScriptTracker(sc.segs, 'ko');
+  const step = (text) => { const m = tr.match(text); if (m) tr.cur = m.idx; return m && m.idx; };
+  assert.equal(step('오늘 본문은 요한복음 3장 16절입니다'), 0);
+  assert.equal(step('하나님이 세상을 이처럼 사랑하셔서 독생자를'), 1);          // 말 바꿈
+  assert.equal(step('그를 믿는 자마다 멸망치 않고 영생을 얻게'), 2);
+  assert.equal(step('여러분 점심은 식당에서 드시면 됩니다'), null);             // 대본에 없는 말
+  assert.equal(step('이웃을 내 몸 같이 사랑해야 합니다'), 5);                    // 두 구간 건너뜀
+  assert.equal(step('행함과 진실함으로 사람합시다'), 6);                          // 인식 오타
+  assert.equal(step('우리는 이 사랑을 받은 사람들입니다'), 3);                   // 앞으로 돌아감
+  assert.ok(tr.upcoming(30).startsWith('우리는 이 사랑을'));
+});

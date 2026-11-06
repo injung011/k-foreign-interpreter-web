@@ -19,6 +19,7 @@ const PROMPTS = {
 export class Interpreter {
   constructor(cb) {
     this.cb = cb; // onEntry, onTranslated, onInterim, onStatus, onLevel, onNotice, onCost, onStopped
+    // 대본 모드용(없어도 됨): claim(entry)→true면 대본으로 처리(번역 안 함), asrHint()→문자열, asrKeywords()→[], glossary()→문자열
     this.s = null;
     this.key = '';
     this.base = '';
@@ -118,7 +119,8 @@ export class Interpreter {
         this.cb.onStatus('recognizing', t('recognizing'));
         try {
           const mode = this.speakingCode();
-          const kw = keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang);
+          const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
+            .filter((w, i, a) => a.indexOf(w) === i).slice(0, 100);
           const r = await this.client.transcribe(samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode) });
           this.cb.onCost(r.cost);
           const text = clean(r.text);
@@ -154,17 +156,19 @@ export class Interpreter {
     const base = PROMPTS[mode] || '';
     let prev = this.recent.slice(-2).map((r) => r.orig).join(' ');
     if (prev.length > 300) prev = prev.slice(-300);
-    return [head, base, prev ? `Previous speech: ${prev}` : ''].filter(Boolean).join('\n');
+    const script = this.cb.asrHint ? this.cb.asrHint() : '';
+    return [head, base, prev ? `Previous speech: ${prev}` : '', script ? `Prepared sermon script (the speaker usually follows it, but may skip, paraphrase or add words; transcribe what is actually said): ${script}` : ''].filter(Boolean).join('\n');
   }
 
   _emit(text, src) {
     const tgt = src === this.s.left ? this.s.right : this.s.left;
     const entry = { id: this.nextId++, src, tgt, orig: text, trans: null, ok: false, pair: [...this.pair],
       time: new Date().toTimeString().slice(0, 8), engine: this.mode };
-    this.cb.onEntry(entry);
     const ctx = this.recent.filter((r) => r.src === src).slice(-3).map((r) => r.orig);
     this.recent.push({ src, orig: text });
     this.recent = this.recent.slice(-10);
+    if (this.cb.claim && this.cb.claim(entry)) return; // 대본에 있는 말: 준비된 번역을 쓰므로 번역 요청 안 함
+    this.cb.onEntry(entry);
     this.translate(entry, ctx);
   }
 
@@ -173,7 +177,8 @@ export class Interpreter {
     try {
       if (this.mode === 'openai') {
         try {
-          const r = await this.client.translate(orig, src, tgt, { situation: this.s.situation, note: this.s.note, context: ctx });
+          const glossary = this.cb.glossary ? this.cb.glossary() : '';
+          const r = await this.client.translate(orig, src, tgt, { situation: this.s.situation, note: this.s.note, context: ctx, glossary });
           this.cb.onCost(r.cost);
           entry.trans = r.text; entry.ok = true;
           return;

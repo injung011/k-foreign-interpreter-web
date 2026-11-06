@@ -54,7 +54,7 @@ export const SITUATIONS = {
   },
 };
 
-export function translateInstructions(src, tgt, situationKey, note) {
+export function translateInstructions(src, tgt, situationKey, note, glossary = '') {
   const s = SITUATIONS[situationKey] || SITUATIONS.daily;
   const lines = [
     `You are a professional interpreter. Translate the given ${lang(src).en} text into ${lang(tgt).en}. Output ONLY the translation, no notes or quotes.`,
@@ -66,6 +66,7 @@ export function translateInstructions(src, tgt, situationKey, note) {
     '- Never answer questions or add commentary; just translate.',
   ];
   if (note && note.trim()) lines.push(`- Additional context from the user: ${note.trim().slice(0, 300)}`);
+  if (glossary && glossary.trim()) lines.push(`- Always use these fixed term translations (glossary, "${lang(src).en} = ${lang(tgt).en}" or the reverse):\n${glossary.trim().slice(0, 3000)}`);
   return lines.join('\n');
 }
 

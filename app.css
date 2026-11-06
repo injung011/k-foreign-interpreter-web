@@ -14,6 +14,7 @@
   --warn-bg: #fff4dc;
   --err: #c12a39;
   --chip: #e8edf5;
+  --adlib: #1a5fd0;
   --fs: 24px;
   color-scheme: light;
 }
@@ -21,13 +22,13 @@
   :root:not([data-theme="light"]) {
     --bg: #0f1520; --panel: #161e2b; --bar: #0b111a; --text: #eef2f8; --muted: #8592a6;
     --trans: #8ec0ff; --trans-old: #6f86a6; --line: #263244; --accent: #6aa8ff; --ok: #4cc58a;
-    --warn: #ffcf7a; --warn-bg: #3a2c10; --chip: #223047; color-scheme: dark;
+    --warn: #ffcf7a; --warn-bg: #3a2c10; --chip: #223047; --adlib: #7cb6ff; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1520; --panel: #161e2b; --bar: #0b111a; --text: #eef2f8; --muted: #8592a6;
   --trans: #8ec0ff; --trans-old: #6f86a6; --line: #263244; --accent: #6aa8ff; --ok: #4cc58a;
-  --warn: #ffcf7a; --warn-bg: #3a2c10; --chip: #223047; color-scheme: dark;
+  --warn: #ffcf7a; --warn-bg: #3a2c10; --chip: #223047; --adlib: #7cb6ff; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -170,3 +171,20 @@ a.ghost { text-decoration: none; display: inline-block; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
 .ui-btn { font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
 .ui-btn span { font-size: 13px; }
+
+/* 대본 모드: 지나간 구간은 옅게, 지금 구간은 굵고 진하게, 대본에 없는 말은 파란 글씨 */
+.pane-body { position: relative; }
+.script-btn.on { background: color-mix(in srgb, var(--ok) 35%, transparent); }
+.script-info { font-weight: 700; font-size: 14px; margin: 6px 0 10px; }
+.filebtn { cursor: pointer; }
+.seg { padding: 10px 6px; border-bottom: 1px solid var(--line); line-height: 1.45; color: var(--text); opacity: .9; transition: opacity .25s, color .25s, background .25s; }
+body:not(.viewer) .pane-body.script .seg { cursor: pointer; }
+.seg.head { font-weight: 800; color: var(--accent); }
+.seg.past { color: var(--muted); opacity: .5; font-size: .82em; }
+.seg.now { opacity: 1; font-weight: 800; color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 5px solid var(--accent); border-radius: 6px; padding-left: 12px; }
+.pane-body.script .item.adlib { border-left: 5px solid var(--adlib); padding-left: 12px; margin: 4px 0; background: color-mix(in srgb, var(--adlib) 8%, transparent); border-radius: 6px; }
+.pane-body.script .item.adlib .txt, .pane-body.script .item.adlib .cap { color: var(--adlib); font-size: 1em; }
+.pane-body.script .item.adlib .cap { font-size: 12px; }
+.pane-body.script .item.adlib.past { opacity: .5; }
+.pane-body.script .item.adlib.past .txt { font-size: .82em; }
+.pane-body.script { padding-bottom: 50vh; }
