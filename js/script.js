@@ -45,6 +45,23 @@ export function parseScript(text) {
   return { segs: good.map((s, i) => ({ i, n: s.n, t: s.t })), terms, langs: langs.slice(0, 2) };
 }
 
+// 성경 장절 약어 → 말로 읽는 형태. "(창 1:26)" → "창세기 1장 26절"
+// 목사님은 괄호·약어를 그대로 읽지 않고 "창세기 1장 26절 읽겠습니다"처럼 말하므로, 비교할 때만 풀어서 씀(화면 글자는 그대로).
+const BOOKS = {
+  창: '창세기', 출: '출애굽기', 레: '레위기', 민: '민수기', 신: '신명기', 수: '여호수아', 삿: '사사기', 룻: '룻기',
+  삼상: '사무엘상', 삼하: '사무엘하', 왕상: '열왕기상', 왕하: '열왕기하', 대상: '역대상', 대하: '역대하', 스: '에스라', 느: '느헤미야',
+  에: '에스더', 욥: '욥기', 시: '시편', 잠: '잠언', 전: '전도서', 아: '아가', 사: '이사야', 렘: '예레미야', 애: '예레미야애가',
+  겔: '에스겔', 단: '다니엘', 호: '호세아', 욜: '요엘', 암: '아모스', 옵: '오바댜', 욘: '요나', 미: '미가', 나: '나훔', 합: '하박국',
+  습: '스바냐', 학: '학개', 슥: '스가랴', 말: '말라기', 마: '마태복음', 막: '마가복음', 눅: '누가복음', 요: '요한복음', 행: '사도행전',
+  롬: '로마서', 고전: '고린도전서', 고후: '고린도후서', 갈: '갈라디아서', 엡: '에베소서', 빌: '빌립보서', 골: '골로새서',
+  살전: '데살로니가전서', 살후: '데살로니가후서', 딤전: '디모데전서', 딤후: '디모데후서', 딛: '디도서', 몬: '빌레몬서', 히: '히브리서',
+  약: '야고보서', 벧전: '베드로전서', 벧후: '베드로후서', 요일: '요한일서', 요이: '요한이서', 요삼: '요한삼서', 유: '유다서', 계: '요한계시록',
+};
+const REF = new RegExp(`\\(?\\s*(?<![가-힣])(${Object.keys(BOOKS).sort((x, y) => y.length - x.length).join('|')})\\s*(\\d+)\\s*:\\s*(\\d+)(?:\\s*[-~–]\\s*(\\d+))?\\s*\\)?`, 'g');
+export function expandRefs(text) {
+  return String(text || '').replace(REF, (_, b, c, v, v2) => ` ${BOOKS[b]} ${c}${b === '시' ? '편' : '장'} ${v}절${v2 ? ` ${v2}절` : ''} `).replace(/\s+/g, ' ').trim();
+}
+
 const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 function grams(s) {
   const n = norm(s);
@@ -58,7 +75,8 @@ export class ScriptTracker {
   constructor(segs, src) {
     this.segs = segs;
     this.src = src;
-    this.g = segs.map((s) => grams(s.t[src]));
+    this.text = segs.map((s) => (src === 'ko' ? expandRefs(s.t[src]) : s.t[src] || ''));
+    this.g = this.text.map((x) => grams(x));
     const df = new Map();
     for (const g of this.g) for (const b of g) df.set(b, (df.get(b) || 0) + 1);
     const N = segs.length;
@@ -109,7 +127,7 @@ export class ScriptTracker {
   // 다음에 나올 대본(음성 인식 힌트용)
   upcoming(chars = 500) {
     let out = '';
-    for (let k = Math.max(0, this.cur); k < this.segs.length && out.length < chars; k++) out += (out ? ' ' : '') + (this.segs[k].t[this.src] || '');
+    for (let k = Math.max(0, this.cur); k < this.segs.length && out.length < chars; k++) out += (out ? ' ' : '') + this.text[k];
     return out.slice(0, chars);
   }
 }
