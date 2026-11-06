@@ -188,3 +188,11 @@ body:not(.viewer) .pane-body.script .seg { cursor: pointer; }
 .pane-body.script .item.adlib.past { opacity: .5; }
 .pane-body.script .item.adlib.past .txt { font-size: .82em; }
 .pane-body.script { padding-bottom: 50vh; }
+.scriptbar { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; text-align: left; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg)); color: var(--text); }
+.scriptbar[hidden] { display: none; }
+.scriptbar .ttl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scriptbar .pos { flex: none; color: var(--accent); }
+.scriptbar .prog { flex: none; width: 70px; height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+.scriptbar .prog i { display: block; height: 100%; background: var(--accent); }
+.viewer .scriptbar { cursor: default; }
