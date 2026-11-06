@@ -9,7 +9,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.6';
+export const VERSION = 'web v1.6.1';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -621,6 +621,16 @@ function rebuildPanes() {
   if (!entries.size) renderEmpty();
 }
 
+// 대본에 없는 말(파란 글씨)을 모두 지움 — 대본을 새로 불러오거나 처음부터 다시 할 때(예전 연습 내용이 남지 않게)
+function clearAdlibs() {
+  for (const [id, e] of [...entries]) {
+    if (e.at === undefined) continue;
+    e.srcEl.remove(); e.trEl.remove();
+    entries.delete(id);
+  }
+  if (share.active) share.send({ t: 'clear' });
+}
+
 function sendScript() {
   if (!script || !share.active) return;
   const now = Date.now();
@@ -636,6 +646,10 @@ function sendScript() {
 }
 
 function viewerScriptMsg(m) {
+  if (m.t === 'clear') {
+    for (const [id, e] of [...entries]) if (e.at !== undefined) { e.srcEl.remove(); e.trEl.remove(); entries.delete(id); }
+    return;
+  }
   if (m.t === 'pos') { if (tracker) setScriptCur(m.i, { broadcast: false }); return; }
   if (m.t !== 'script') return;
   if (script && script.id === m.id) return;
@@ -672,6 +686,7 @@ function loadScriptText(text, name) {
   sc.id = Math.random().toString(36).slice(2, 10);
   s.scriptCur = -1;
   if (!setScript(sc)) return;
+  clearAdlibs();
   const [a, b] = sc.langs;
   if (LANGS[a] && LANGS[b]) { s.left = a; s.right = b; }
   s.scriptOn = true;
@@ -699,9 +714,10 @@ function bindScript() {
     save(); applyEngine(); render(); rebuildPanes(); renderScriptDlg();
     if (share.active) share.send({ t: 'state', state: publicState() });
   };
-  $('scriptReset').onclick = () => { setScriptCur(-1); renderScriptDlg(); };
+  $('scriptReset').onclick = () => { clearAdlibs(); setScriptCur(-1); renderScriptDlg(); };
   $('scriptClear').onclick = () => {
     if (!confirm(t('scriptConfirmClear'))) return;
+    clearAdlibs();
     s.scriptOn = false; s.scriptCur = -1; setScript(null); save(); render(); rebuildPanes(); renderScriptDlg();
     if (share.active) share.send({ t: 'state', state: publicState() });
   };
