@@ -26,6 +26,7 @@ RU = ['1. Любовь Божья', 'Сегодняшний текст — Ев�
 SCRIPT = '\n\n'.join(f'[{i + 1}]\nKO: {k}\nRU: {r}' for i, (k, r) in enumerate(zip(LINES, RU))) + '\n\n용어표\n하나님 = Бог\n요한복음 = Евангелие от Иоанна\n'
 HEARD = ['오늘 본문은 요한복음 3장 16절입니다', '하나님이 세상을 이처럼 사랑하셔서 독생자를 주셨으니',
          '여러분 점심은 식당에서 드시면 됩니다',                       # 대본에 없는 말
+         '여러분 점심은 식당에서 드시면 됩니다',                       # 바로 앞 말을 인식이 다시 적은 것(걸러야 함)
          '그를 믿는 자마다 멸망치 않고 영생을 얻게 하려 하심이라', '자,',  # 짧은 군말(무시)
          '이웃을 내 몸 같이 사랑해야 합니다',                           # 두 구간 건너뜀
          '행함과 진실함으로 사람합시다']                                 # 인식 오타
@@ -111,10 +112,17 @@ def main():
             res['asr_prompt_has_script'] = any('Prepared sermon script' in x for x in pr)
             gl = [x['body'].get('instructions', '') for x in log if x['path'] == 'responses']
             res['glossary_in_translation'] = any('glossary' in x for x in gl)
+            # 처음 위치로 → 예전 파란 글씨가 남지 않아야 함(보는 쪽도)
+            h.click('#scriptBtn'); h.click('#scriptReset'); h.click('#scriptDlg form button')
+            h.wait_for_timeout(600)
+            res['adlibs_after_reset'] = h.evaluate("document.querySelectorAll('.item.adlib').length")
+            res['viewer_adlibs_after_reset'] = v.evaluate("document.querySelectorAll('.item.adlib').length")
+            h.keyboard.press('ArrowDown'); h.keyboard.press('ArrowDown')
+            h.wait_for_timeout(300)
             # 진행자가 ↓ 키로 바로잡기 + 새로고침 후 위치 유지
             h.keyboard.press('ArrowDown')
             h.wait_for_timeout(300)
-            res['after_key'] = h.evaluate('window.__app.tracker.cur')
+            res['after_key'] = h.evaluate('window.__app.tracker.cur')  # 처음(-1)에서 ↓ 3번 → 2
             h.reload(); h.wait_for_timeout(800)
             res['after_reload'] = h.evaluate("({cur: window.__app.tracker.cur, now: !!document.querySelector('.seg.now')})")
             res['errors'] = errs

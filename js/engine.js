@@ -126,6 +126,7 @@ export class Interpreter {
           const text = clean(r.text);
           let code = mode !== 'auto' ? mode : (langFromText(text, this.pair) || r.lang);
           if (!text || isHallucination(text) || !this.pair.includes(code)) continue;
+          if (this._isEcho(text)) continue; // 힌트로 보낸 '앞 문장'을 인식이 그대로 따라 적은 것
           if (!matchesLang(text, code) && !sameScript(...this.pair)) continue;
           this._emit(text, code);
         } catch (e) {
@@ -158,6 +159,24 @@ export class Interpreter {
     if (prev.length > 300) prev = prev.slice(-300);
     const script = this.cb.asrHint ? this.cb.asrHint() : '';
     return [head, base, prev ? `Previous speech: ${prev}` : '', script ? `Prepared sermon script (the speaker usually follows it, but may skip, paraphrase or add words; transcribe what is actually said): ${script}` : ''].filter(Boolean).join('\n');
+  }
+
+  // 조용하거나 잘 안 들릴 때 음성 인식이 힌트(바로 앞에 한 말)를 그대로 다시 적는 경우가 있어 걸러 냄
+  _isEcho(text) {
+    const n = (x) => String(x).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    const a = n(text);
+    if (a.length < 6) return false;
+    const grams = (x) => { const g = new Set(); for (let i = 0; i < x.length - 1; i++) g.add(x.slice(i, i + 2)); return g; };
+    const ga = grams(a);
+    for (const r of this.recent.slice(-4)) {
+      const b = n(r.orig);
+      if (b === a) return true;
+      const gb = grams(b);
+      let hit = 0;
+      for (const x of ga) if (gb.has(x)) hit++;
+      if ((2 * hit) / (ga.size + gb.size) >= 0.9) return true;
+    }
+    return false;
   }
 
   _emit(text, src) {

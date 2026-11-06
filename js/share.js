@@ -146,7 +146,7 @@ export class ShareViewer {
       for (const e of m.entries || []) this.cb.onEntry(e);
       this.cb.onStatus('live');
     }
-    if ((m.t === 'script' || m.t === 'pos') && this.cb.onOther) { this.cb.onOther(m); this.cb.onStatus('live'); }
+    if ((m.t === 'script' || m.t === 'pos' || m.t === 'clear') && this.cb.onOther) { this.cb.onOther(m); this.cb.onStatus('live'); }
   }
 
   // 처음 받는 것처럼 다시 요청(대본을 못 받았을 때)
