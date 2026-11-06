@@ -175,3 +175,20 @@ test('대본: 위치 따라가기 — 말 바꿈·오타는 따라가고, 대본
   assert.equal(step('우리는 이 사랑을 받은 사람들입니다'), 3);                   // 앞으로 돌아감
   assert.ok(tr.upcoming(30).startsWith('우리는 이 사랑을'));
 });
+
+test('대본: 성경 장절 약어를 말로 읽는 형태로 비교("창세기 1장 26절 읽겠습니다")', async () => {
+  const { expandRefs, parseScript, ScriptTracker } = await import('../js/script.js');
+  assert.equal(expandRefs('(창 1:26) 하나님이'), '창세기 1장 26절 하나님이');
+  assert.equal(expandRefs('(벧전 1:3-5)'), '베드로전서 1장 3절 5절');
+  assert.equal(expandRefs('(시 23:1)'), '시편 23편 1절');
+  assert.equal(expandRefs('시간 3:00에'), '시간 3:00에'); // 약어가 아닌 말은 그대로
+  const sc = parseScript(['2. 제목', '오늘은 사람을 창조하신 목적을 생각해 보겠습니다', '(창 1:26) 하나님이 가라사대 우리의 형상을 따라 우리의 모양대로 사람을 만들고',
+    '(창 1:27) 하나님이 자기 형상 곧 하나님의 형상대로 사람을 창조하시되', '(눅 15:20) 이에 일어나서 아버지께로 돌아가니라']
+    .map((k, i) => `[${i + 1}]\nKO: ${k}\nRU: ru${i}`).join('\n\n'));
+  const tr = new ScriptTracker(sc.segs, 'ko');
+  const step = (x) => { const m = tr.match(x); if (m) tr.cur = m.idx; return m && m.idx; };
+  assert.equal(step('오늘은 사람을 창조하신 목적을 생각해 보겠습니다'), 1);   // 제목 건너뜀
+  assert.equal(step('창세기 1장 26절 읽겠습니다'), 2);                         // 장절만 말해도 그 구간으로
+  assert.equal(step('하나님이 가라사대 우리의 형상을 따라'), 2);
+  assert.equal(step('누가복음 15장 20절 말씀입니다'), 4);
+});

@@ -9,7 +9,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.5.1';
+export const VERSION = 'web v1.6';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -486,7 +486,7 @@ function loadSavedScript() {
 function claimScript(e) {
   if (!scriptActive()) return false;
   e.at = tracker.cur;
-  if (e.src !== script.langs[0]) return false;
+  if (e.src !== script.langs[0]) return true; // 대본 모드는 한쪽 방향: 대본 언어(보통 한국어)가 아닌 말은 통역하지 않음
   const m = tracker.match(e.orig);
   if (m) {
     setScriptCur(m.idx, { heard: e.orig });
@@ -675,6 +675,7 @@ function loadScriptText(text, name) {
   const [a, b] = sc.langs;
   if (LANGS[a] && LANGS[b]) { s.left = a; s.right = b; }
   s.scriptOn = true;
+  s.speaking = 'left'; // 대본 언어로 고정(자동 언어 구분보다 정확)
   save(); applyEngine(); render(); rebuildPanes();
   if (share.active) { sendScript.last = 0; sendScript(); }
   $('scriptText').value = '';
@@ -693,7 +694,9 @@ function bindScript() {
   };
   $('scriptLoad').onclick = () => { if ($('scriptText').value.trim()) loadScriptText($('scriptText').value, ''); };
   $('scriptToggle').onclick = () => {
-    s.scriptOn = !s.scriptOn; save(); render(); rebuildPanes(); renderScriptDlg();
+    s.scriptOn = !s.scriptOn;
+    if (s.scriptOn && script && s.left === script.langs[0]) s.speaking = 'left';
+    save(); applyEngine(); render(); rebuildPanes(); renderScriptDlg();
     if (share.active) share.send({ t: 'state', state: publicState() });
   };
   $('scriptReset').onclick = () => { setScriptCur(-1); renderScriptDlg(); };
