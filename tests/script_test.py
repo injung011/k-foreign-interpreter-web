@@ -65,6 +65,7 @@ def main():
             h.set_input_files('#scriptFile', path)
             h.wait_for_timeout(300)
             res['info'] = h.text_content('#scriptInfo')
+            res['bar'] = h.text_content('#scriptBar')
             h.screenshot(path=os.path.join(OUT, '1_dialog.png'))
             h.click('#scriptDlg form button')
             # 공유 + 보는 사람(러시아어만)
@@ -101,6 +102,8 @@ def main():
                 adlibRight: [...b('right').querySelectorAll('.item.adlib .txt')].map(x => x.textContent),
                 leftHidden: getComputedStyle(document.getElementById('paneLeft')).display === 'none' }; }"""
             res['host'] = h.evaluate(q)
+            res['bar_end'] = h.text_content('#scriptBar')
+            res['viewer_bar'] = v.text_content('#scriptBar')
             res['viewer'] = v.evaluate(q)
             log = h.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_log', {{headers:{{Authorization:'Bearer sk-good'}}}}).then(r=>r.json())")['log']
             res['translate_calls'] = sum(1 for x in log if x['path'] == 'responses')

@@ -9,7 +9,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.5';
+export const VERSION = 'web v1.5.1';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -157,6 +157,7 @@ function render() {
   if (!engine.running && !IS_VIEWER && $('statusText').dataset.idle !== '0') $('statusText').textContent = t('ready');
   renderShareBar(share.viewers.size);
   $('scriptBtn').classList.toggle('on', scriptActive());
+  renderScriptBar();
   if (!scriptView() && !entries.size) renderEmpty();
 }
 
@@ -504,6 +505,7 @@ function setScriptCur(i, { heard = '', broadcast = true } = {}) {
   tracker.cur = i;
   if (!IS_VIEWER) { s.scriptCur = i; save(); }
   applyScriptCur(true);
+  renderScriptBar();
   if (heard && i >= 0) setStatus('listening', `🎯 ${script.segs[i].n} · ${heard.slice(0, 40)}`);
   if (broadcast && share.active) share.send({ t: 'pos', i });
   // 소리로 읽기가 켜진 언어는 새 구간이 되면 준비된 번역을 읽음
@@ -514,6 +516,29 @@ function setScriptCur(i, { heard = '', broadcast = true } = {}) {
       if (side && (side === 'left' ? s.readLeft : s.readRight) && script.segs[i].t[code]) speaker.say(script.segs[i].t[code], code, 'seg' + i);
     }
   }
+}
+
+function scriptTitle() {
+  if (!script) return '';
+  const first = (script.segs[0] && (script.segs[0].t[uiLang()] || script.segs[0].t[script.langs[0]])) || '';
+  const head = first.length <= 60 ? first : first.slice(0, 57) + '…';
+  const name = script.name && !/^(downloadfile|script|대본|untitled)/i.test(script.name) ? script.name : '';
+  return name && head && !head.includes(name) ? `${name} — ${head}` : (name || head);
+}
+
+// 위쪽 막대: 불러온 대본 이름과 진행 위치(누르면 대본 창)
+function renderScriptBar() {
+  const bar = $('scriptBar');
+  bar.hidden = !scriptView();
+  if (bar.hidden) return;
+  const n = script.segs.length;
+  const cur = tracker.cur;
+  const pos = cur >= 0 ? `${cur + 1} / ${n}` : `– / ${n}`;
+  bar.innerHTML = '<span>📜</span><span class="ttl"></span><span class="pos"></span><span class="prog"><i></i></span>';
+  bar.querySelector('.ttl').textContent = scriptTitle();
+  bar.querySelector('.pos').textContent = pos;
+  bar.querySelector('.prog i').style.width = `${Math.round(((cur + 1) / n) * 100)}%`;
+  bar.title = t('scriptTitle');
 }
 
 function isHeading(text) { return /^\s*\d+[.)]\s/.test(text) && text.length < 60; }
@@ -621,6 +646,7 @@ function viewerScriptMsg(m) {
     viewerParts = null;
     tracker.cur = s.viewerCur ?? -1;
     rebuildPanes();
+    renderScriptBar();
   }
 }
 
@@ -631,7 +657,7 @@ function openScriptDlg() {
 
 function renderScriptDlg() {
   $('scriptInfo').textContent = script
-    ? t('scriptInfo', { name: script.name || '', n: script.segs.length, m: script.terms.length, cur: tracker.cur >= 0 ? script.segs[tracker.cur].n : '-' })
+    ? '✅ ' + t('scriptInfo', { name: scriptTitle(), n: script.segs.length, m: script.terms.length, cur: tracker.cur >= 0 ? tracker.cur + 1 : '-' })
     : t('scriptNone');
   $('scriptToggle').textContent = s.scriptOn ? t('scriptOff') : t('scriptOn');
   $('scriptToggle').disabled = !script;
@@ -653,11 +679,12 @@ function loadScriptText(text, name) {
   if (share.active) { sendScript.last = 0; sendScript(); }
   $('scriptText').value = '';
   renderScriptDlg();
-  notice(t('scriptLoaded', { n: sc.segs.length }));
+  notice(t('scriptLoaded', { n: sc.segs.length, name: scriptTitle() }));
 }
 
 function bindScript() {
   $('scriptBtn').onclick = openScriptDlg;
+  $('scriptBar').onclick = () => { if (!IS_VIEWER) openScriptDlg(); };
   $('scriptFile').onchange = async () => {
     const f = $('scriptFile').files[0];
     if (!f) return;
