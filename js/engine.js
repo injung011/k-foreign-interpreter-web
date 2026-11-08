@@ -8,6 +8,8 @@ import { keywords, SITUATIONS } from './situations.js';
 import { Segmenter } from './segmenter.js';
 import { clean, isHallucination, langFromText, matchesLang } from './textfilter.js';
 
+const MAX_PARALLEL = 3;
+const MAX_SEG_SEC = 8; // 쉬지 않고 길게 말할 때 이 길이마다 가장 조용한 곳에서 잘라 보냄
 const SIT_EN = { church: 'Church service / sermon', hospital: 'Medical consultation', meeting: 'Business meeting', daily: 'Everyday', travel: 'Travel and shopping', custom: 'General' };
 
 const PROMPTS = {
@@ -28,9 +30,12 @@ export class Interpreter {
     this.muted = false;
     this.nextId = 1;
     this.utts = [];
-    this.recognizing = false;
+    this.inflight = 0;
+    this.seqIn = 0;
+    this.seqOut = 0;
+    this.done = new Map();
+    this.lost = 0;
     this.recent = [];
-    this.cooldownUntil = 0;
   }
 
   configure(settings, key, base) {
@@ -40,7 +45,7 @@ export class Interpreter {
       this.base = base;
       this.client = key ? new OpenAIClient(key, base) : null;
     }
-    this.seg?.setParams(settings.sensitivity, settings.silenceSec, 12);
+    this.seg?.setParams(settings.sensitivity, settings.silenceSec, MAX_SEG_SEC);
     if (this.free) this.free.setLang(this.speakingFree());
   }
 
@@ -54,7 +59,7 @@ export class Interpreter {
     this.running = true;
     this.muted = false;
     if (this.mode === 'openai') {
-      this.seg = new Segmenter(this.s.sensitivity, this.s.silenceSec, 12);
+      this.seg = new Segmenter(this.s.sensitivity, this.s.silenceSec, MAX_SEG_SEC);
       this.mic = new MicCapture((b) => this._onBlock(b), { noiseSuppression: !!this.s.noiseSuppression });
       try {
         const name = await this.mic.start();
@@ -103,46 +108,59 @@ export class Interpreter {
     for (const u of r.utterances) this._queue(u);
   }
 
+  // 받아 적기: 버리지 않고, 최대 3개를 동시에 보내고, 결과는 말한 순서대로 화면에 냄
   _queue(samples) {
-    this.utts.push(samples);
-    if (this.utts.length > 6) { this.utts.shift(); this.cb.onNotice(t('queueSkip')); }
-    this._recognizeLoop();
+    this.utts.push({ samples, seq: this.seqIn++ });
+    this._pump();
   }
 
-  async _recognizeLoop() {
-    if (this.recognizing) return;
-    this.recognizing = true;
-    try {
-      while (this.utts.length) {
-        const samples = this.utts.shift();
-        if (Date.now() < this.cooldownUntil) continue;
-        this.cb.onStatus('recognizing', t('recognizing'));
-        try {
-          const mode = this.speakingCode();
-          const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
-            .filter((w, i, a) => a.indexOf(w) === i).slice(0, 100);
-          const r = await this.client.transcribe(samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode) });
-          this.cb.onCost(r.cost);
-          const text = clean(r.text);
-          let code = mode !== 'auto' ? mode : (langFromText(text, this.pair) || r.lang);
-          if (!text || isHallucination(text) || !this.pair.includes(code)) continue;
-          if (this._isEcho(text)) continue; // 힌트로 보낸 '앞 문장'을 인식이 그대로 따라 적은 것
-          if (!matchesLang(text, code) && !sameScript(...this.pair)) continue;
-          this._emit(text, code);
-        } catch (e) {
-          if (e instanceof OpenAIError && (e.kind === 'auth' || e.kind === 'quota')) {
-            this.cb.onNotice(e.userMessage);
-            this.stop();
-            return;
-          }
-          this.cooldownUntil = Date.now() + 5000;
-          this.cb.onNotice((e.userMessage || String(e)) + t('retryLater'));
-        }
-      }
-    } finally {
-      this.recognizing = false;
-      if (this.running) this.cb.onStatus('listening', t('listening'));
+  _pump() {
+    while (this.inflight < MAX_PARALLEL && this.utts.length) {
+      const u = this.utts.shift();
+      this.inflight++;
+      this._recognize(u).finally(() => { this.inflight--; this._pump(); });
     }
+    const waiting = this.utts.length + this.inflight;
+    if (waiting) this.cb.onStatus('recognizing', t('recognizing') + (waiting > 1 ? ` (${waiting})` : ''));
+    else if (this.running) this.cb.onStatus('listening', t('listening'));
+  }
+
+  async _recognize(u) {
+    let result = null;
+    const mode = this.speakingCode();
+    for (let attempt = 0; attempt < 3 && !result; attempt++) {
+      try {
+        const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
+          .filter((w, i, a) => a.indexOf(w) === i).slice(0, 100);
+        const r = await this.client.transcribe(u.samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode) });
+        this.cb.onCost(r.cost);
+        result = { r, mode };
+      } catch (e) {
+        if (e instanceof OpenAIError && (e.kind === 'auth' || e.kind === 'quota')) {
+          this.cb.onNotice(e.userMessage);
+          this.stop();
+          break;
+        }
+        if (attempt === 2) { this.lost++; this.cb.onNotice((e.userMessage || String(e)) + t('retryLater')); }
+        else await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); // 잠깐 쉬고 다시 시도
+      }
+    }
+    this.done.set(u.seq, result);
+    while (this.done.has(this.seqOut)) {
+      const d = this.done.get(this.seqOut);
+      this.done.delete(this.seqOut);
+      this.seqOut++;
+      if (d) this._accept(d.r, d.mode);
+    }
+  }
+
+  _accept(r, mode) {
+    const text = clean(r.text);
+    const code = mode !== 'auto' ? mode : (langFromText(text, this.pair) || r.lang);
+    if (!text || isHallucination(text) || !this.pair.includes(code)) return;
+    if (this._isEcho(text)) return; // 힌트로 보낸 '앞 문장'을 인식이 그대로 따라 적은 것
+    if (!matchesLang(text, code) && !sameScript(...this.pair)) return;
+    this._emit(text, code);
   }
 
   _onFreeFinal(text, code) {
@@ -163,20 +181,12 @@ export class Interpreter {
 
   // 조용하거나 잘 안 들릴 때 음성 인식이 힌트(바로 앞에 한 말)를 그대로 다시 적는 경우가 있어 걸러 냄
   _isEcho(text) {
+    // 힌트를 그대로 따라 적을 때는 글자 하나 안 틀리고 똑같이 나옴 → 완전히 같은 문장(또는 앞 문장의 일부를 그대로)만 거름.
+    // 비슷하기만 한 문장은 실제로 다시 말한 것일 수 있어 버리지 않음.
     const n = (x) => String(x).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
     const a = n(text);
     if (a.length < 6) return false;
-    const grams = (x) => { const g = new Set(); for (let i = 0; i < x.length - 1; i++) g.add(x.slice(i, i + 2)); return g; };
-    const ga = grams(a);
-    for (const r of this.recent.slice(-4)) {
-      const b = n(r.orig);
-      if (b === a) return true;
-      const gb = grams(b);
-      let hit = 0;
-      for (const x of ga) if (gb.has(x)) hit++;
-      if ((2 * hit) / (ga.size + gb.size) >= 0.9) return true;
-    }
-    return false;
+    return this.recent.slice(-3).some((r) => { const b = n(r.orig); return b === a || (a.length >= 15 && b.includes(a)); });
   }
 
   _emit(text, src) {

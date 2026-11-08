@@ -192,3 +192,25 @@ test('대본: 성경 장절 약어를 말로 읽는 형태로 비교("창세기 
   assert.equal(step('하나님이 가라사대 우리의 형상을 따라'), 2);
   assert.equal(step('누가복음 15장 20절 말씀입니다'), 4);
 });
+
+test('문장 나누기: 쉬지 않고 빠르게 60초 말해도 귀가 먹지 않음(조용한 방·강당 90%, 먼 마이크 80% 이상 보냄), 소음만 있으면 안 보냄', async () => {
+  const { Segmenter, SR, BLOCK } = await import('../js/segmenter.js');
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const make = (room, amp) => {
+    const n = 62 * SR; const x = new Float32Array(n); let i = 0, sp = 0;
+    for (; i < 2 * SR; i++) x[i] = room * (rnd() * 2 - 1);
+    while (i < n) {
+      const len = Math.floor((3 + rnd() * 9) * SR); const loud = amp * (0.6 + rnd() * 0.8);
+      for (let k = 0; k < len && i < n; k++, i++, sp++) { const t = i / SR; x[i] = loud * (0.5 + 0.5 * Math.sin(2 * Math.PI * (5 + 2 * Math.sin(t)) * t)) * (rnd() * 2 - 1) + room * (rnd() * 2 - 1); }
+      const g = Math.floor((0.15 + rnd() * 0.25) * SR);
+      for (let k = 0; k < g && i < n; k++, i++) x[i] = room * (rnd() * 2 - 1);
+    }
+    return { x, sp: amp ? sp : 0 };
+  };
+  const run = ({ x }) => { const s = new Segmenter(5, 1.0, 8); let sent = 0; for (let o = 0; o + BLOCK <= x.length; o += BLOCK) for (const u of s.feed(x.subarray(o, o + BLOCK)).utterances) sent += u.length; const f = s.flush(); return sent + (f ? f.length : 0); };
+  for (const [room, amp, min] of [[0.002, 0.08, 0.9], [0.008, 0.06, 0.9], [0.006, 0.025, 0.8]]) {
+    const a = make(room, amp);
+    assert.ok(run(a) / a.sp >= min, `room ${room} amp ${amp}: ${(run(a) / a.sp * 100).toFixed(0)}%`);
+  }
+  assert.equal(run(make(0.008, 0)), 0);
+});
