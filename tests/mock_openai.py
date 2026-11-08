@@ -2,6 +2,7 @@
 
 키별 동작:  sk-good 정상 / sk-noquota 잔액 부족(429 insufficient_quota) / 그 외 401
 환경 변수:  MOCK_NO_GPT_TRANSCRIBE=1 → gpt-transcribe 없음(404)
+            MOCK_ASR_DELAY=초 → 받아 적기 응답 지연 / MOCK_FAIL_EVERY=N → N번째마다 일시 오류(500)
             MOCK_NO_LUNA=1 → gpt-6-luna 없음
 """
 import io
@@ -106,6 +107,13 @@ class H(BaseHTTPRequestHandler):
                 fields.setdefault(name, []).append(data.decode('utf-8'))
         model = fields.get('model', [''])[0]
         LOG.append({'path': 'transcriptions', 'fields': fields, 'wav_ok': wav_ok, 'secs': secs})
+        H.asr_n = getattr(H, 'asr_n', 0) + 1
+        if os.environ.get('MOCK_ASR_DELAY'):
+            import time
+            time.sleep(float(os.environ['MOCK_ASR_DELAY']))
+        if os.environ.get('MOCK_FAIL_EVERY') and H.asr_n % int(os.environ['MOCK_FAIL_EVERY']) == 0:
+            LOG[-1]['failed'] = True
+            return _err(self, 500, 'server_error', 'temporary failure')
         if self._key() == 'sk-noquota':
             return _err(self, 429, 'insufficient_quota', 'You exceeded your current quota, please check your plan and billing details.')
         if model == 'gpt-transcribe' and os.environ.get('MOCK_NO_GPT_TRANSCRIBE'):

@@ -1,9 +1,12 @@
 // 에너지 기반 발화 구간 분리 (PC 버전 audio.py의 Segmenter와 같은 동작)
-// - 주변 소음 수준을 계속 추정해 임계값 자동 조정
+// - 주변 소음 수준 = 최근 20초 동안 가장 조용했던 순간들(하위 5%). 쉬지 않고 길게 말해도
+//   말소리를 소음으로 착각해 귀가 먹지 않게 함(예전 방식은 12초쯤 뒤부터 빠른 말을 거의 놓쳤음)
+// - 말이 시작되면(임계값 위) 목소리가 임계값의 절반 아래로 떨어질 때까지 계속 듣기(작게 이어지는 말도 놓치지 않게)
 // - 말이 끝나고 silenceSec 동안 조용하면 한 문장으로 내보냄
 // - maxSec을 넘으면 최근 2초 중 가장 조용한 지점에서 자름
 export const SR = 16000;
 export const BLOCK = 1600; // 0.1초
+const NOISE_WINDOW = 200; // 20초
 
 export function rms(block) {
   let s = 0;
@@ -24,6 +27,7 @@ export class Segmenter {
     this.blockSec = BLOCK / SR;
     this.noise = null;
     this.warm = [];
+    this.hist = []; // 최근 블록 소리 크기(소음 추정용) — reset()해도 유지
     this.setParams(sensitivity, silenceSec, maxSec);
     this.reset();
   }
@@ -31,8 +35,8 @@ export class Segmenter {
   setParams(sensitivity, silenceSec, maxSec) {
     if (sensitivity != null) {
       const s = Math.min(10, Math.max(1, sensitivity));
-      this.factor = 1.6 + (10 - s) * 0.45;
-      this.minLevel = 0.0015 + (10 - s) * 0.0011;
+      this.factor = 1.6 + (10 - s) * 0.3;       // 5 → 소음의 3.1배(예전 3.85배는 먼 마이크의 말을 놓침)
+      this.minLevel = 0.0015 + (10 - s) * 0.0006;
     }
     if (silenceSec != null) this.silenceBlocks = Math.max(2, Math.round(silenceSec / this.blockSec));
     if (maxSec != null) this.maxBlocks = Math.max(30, Math.round(maxSec / this.blockSec));
@@ -53,13 +57,17 @@ export class Segmenter {
   }
 
   _updateNoise(level) {
-    const a = level < this.noise ? 0.1 : 0.02;
-    this.noise = Math.max(1e-5, (1 - a) * this.noise + a * level);
+    this.hist.push(level);
+    if (this.hist.length > NOISE_WINDOW) this.hist.shift();
+    if (this.hist.length < 10) return;
+    const sorted = [...this.hist].sort((a, b) => a - b);
+    const low = sorted[Math.floor(sorted.length * 0.02)]; // 쉬지 않고 말해도 숨 쉬는 틈 몇 번이면 충분
+    this.noise = Math.max(1e-5, low * 1.2);
   }
 
   _emit(frames, levels) {
     if (!frames.length) return null;
-    const speech = levels.filter((l) => l > this.threshold).length;
+    const speech = levels.filter((l) => l > this.threshold * 0.5).length; // 작게 이어진 말도 말로 셈
     if (speech < 4 && this.speech < 4) return null;
     return concat(frames);
   }
@@ -75,10 +83,10 @@ export class Segmenter {
       if (this.warm.length >= 3) { this.noise = Math.max(1e-5, Math.min(Math.min(...this.warm), 0.006)); this.warm = []; }
       return { utterances: out, level, threshold: this.threshold, active: false };
     }
+    this._updateNoise(level);
     const thr = this.threshold;
     const loud = level > thr;
     if (!this.active) {
-      if (!loud) this._updateNoise(level);
       this.pre.push([block, level]);
       this.pre = this.pre.slice(-8);
       this.loudRun = loud ? this.loudRun + 1 : 0;
@@ -94,7 +102,8 @@ export class Segmenter {
     }
     this.frames.push(block);
     this.levels.push(level);
-    if (loud) { this.speech++; this.quiet = 0; } else this.quiet++;
+    if (loud) this.speech++;
+    if (level > thr * 0.5) this.quiet = 0; else this.quiet++;
 
     if (this.quiet >= this.silenceBlocks) {
       const keep = this.frames.length - this.quiet + 3;
@@ -109,12 +118,9 @@ export class Segmenter {
       cut += 1;
       const seg = this._emit(this.frames.slice(0, cut), this.levels.slice(0, cut));
       if (seg) out.push(seg);
-      const sorted = [...this.levels].sort((a, b) => a - b);
-      const low = sorted[Math.floor(sorted.length * 0.2)];
-      if (low > this.noise * 1.5) this.noise = 0.5 * this.noise + 0.5 * low;
       this.frames = this.frames.slice(cut);
       this.levels = this.levels.slice(cut);
-      this.speech = this.levels.filter((l) => l > this.threshold).length;
+      this.speech = this.levels.filter((l) => l > this.threshold * 0.5).length;
       this.quiet = 0;
     }
     return { utterances: out, level, threshold: thr, active: this.active };

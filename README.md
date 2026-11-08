@@ -49,6 +49,7 @@ RU: 러시아어 구간
 ```
 node --test tests/*.test.js                 # 핵심 로직 단위 시험
 python3 tests/script_test.py /tmp/out2       # 대본 모드(가짜 인식 결과로 위치 따라가기·파란 글씨·공유)
+python3 tests/stress_test.py /tmp/out3       # 빠르게 쉬지 않고 75초 말하기 + 느리고 가끔 실패하는 서버 → 놓치는 말이 없는지
 python3 tests/browser_test.py /tmp/out       # 실제 크롬 + 가짜 마이크 + 가짜 OpenAI 서버로 전체 흐름 시험
 python3 -m http.server 8000                  # 로컬 실행 → http://127.0.0.1:8000
 ```

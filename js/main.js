@@ -9,7 +9,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.6.1';
+export const VERSION = 'web v1.7';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -73,9 +73,9 @@ const speaker = new Speaker({
   onStart: (item) => {
     speakingCount++;
     clearTimeout(unmuteTimer);
-    if (s.muteWhileSpeaking && !IS_VIEWER) engine.mute(true);
+    if (needMute()) engine.mute(true);
     markSpeaking(item.id, true);
-    if (!IS_VIEWER) setStatus('busy', t('reading') + (s.muteWhileSpeaking ? t('micPaused') : ''));
+    if (!IS_VIEWER) setStatus('busy', t('reading') + (needMute() ? t('micPaused') : ''));
   },
   onEnd: (item) => {
     speakingCount = Math.max(0, speakingCount - 1);
@@ -88,6 +88,13 @@ const speaker = new Speaker({
   onNotice: notice,
   onCost: addCost,
 });
+// 읽어 주는 동안 마이크를 멈출지: 말하는 언어를 손으로 고정했으면 멈추지 않음
+// (읽는 소리는 다른 언어라 인식에서 걸러지므로, 그 사이에 하는 말을 버리지 않게). 자동·무료 모드만 멈춤.
+function needMute() {
+  if (IS_VIEWER || !s.muteWhileSpeaking) return false;
+  return s.speaking === 'auto' || s.mode !== 'openai' || !key;
+}
+
 const share = new ShareHost({
   getSnapshot: () => ({ entries: [...entries.values()].slice(-30).map(publicEntry), state: publicState() }),
   onViewers: (n) => renderShareBar(n),
