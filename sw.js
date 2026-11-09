@@ -1,6 +1,6 @@
 // 앱 화면 파일 캐시: 항상 최신 파일을 먼저 받아 오고(network-first), 인터넷이 없을 때만 저장본 사용.
 // OpenAI·Google 요청은 건드리지 않음.
-const CACHE = 'kfi-shell-v1-7';
+const CACHE = 'kfi-shell-v1-8';
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

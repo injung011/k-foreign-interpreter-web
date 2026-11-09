@@ -9,7 +9,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.7';
+export const VERSION = 'web v1.8';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -203,6 +203,20 @@ function makeItem(isSrc, code) {
   return it;
 }
 
+const RECENT = 3; // 지금 문장 앞에 크게 남겨 둘 개수
+function markRecent() {
+  if (scriptView()) return;
+  for (const side of ['left', 'right']) {
+    const items = [...paneBody(side).querySelectorAll(':scope > .item')];
+    items.forEach((el, k) => {
+      const back = items.length - 1 - k;
+      el.classList.toggle('now', back === 0);
+      el.classList.toggle('recent', back > 0 && back <= RECENT);
+      el.classList.toggle('old', back > RECENT);
+    });
+  }
+}
+
 function clearEmpty() {
   document.querySelectorAll('.pane-body .welcome, .pane-body .placeholder').forEach((x) => x.remove());
 }
@@ -236,6 +250,7 @@ function addEntry(e) {
     old.srcEl.remove(); old.trEl.remove();
     entries.delete(id);
   }
+  markRecent();
   for (const side of ['left', 'right']) if (follow[side]) scrollBottom(side);
   if (share.active) share.entry(e);
 }
@@ -581,6 +596,7 @@ function renderScriptView() {
 }
 
 function placeAdlib(body, el, at) {
+  el.classList.remove('now', 'recent', 'old');
   el.classList.add('adlib');
   el.dataset.at = at;
   const next = body.querySelector(`.seg[data-i="${at + 1}"]`);
@@ -606,6 +622,7 @@ function applyScriptCur(smooth, force = false) {
       if (el.classList.contains('seg')) {
         const i = +el.dataset.i;
         el.classList.toggle('past', i < cur);
+        el.classList.toggle('recent', i < cur && i >= cur - RECENT);
         el.classList.toggle('now', i === cur);
       } else if (el.classList.contains('adlib')) el.classList.toggle('past', +el.dataset.at < cur);
     }
@@ -625,6 +642,8 @@ function rebuildPanes() {
     paneBody(sideOf(e, e.src)).appendChild(e.srcEl);
     paneBody(sideOf(e, e.tgt)).appendChild(e.trEl);
   }
+  for (const e of entries.values()) for (const el of [e.srcEl, e.trEl]) el.classList.remove('now', 'recent', 'old');
+  markRecent();
   if (!entries.size) renderEmpty();
 }
 
