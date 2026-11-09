@@ -15,6 +15,9 @@
   --err: #c12a39;
   --chip: #e8edf5;
   --adlib: #1a5fd0;
+  --now-bg: #ffe45c;   /* 지금 문장 바탕(노랑) */
+  --now-fg: #111111;
+  --now-trans: #0b2a5c;
   --fs: 24px;
   color-scheme: light;
 }
@@ -92,8 +95,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .item.trans .txt, .item.trans .cap { color: var(--trans); }
 .item.trans.fail .txt, .item.trans.fail .cap { color: var(--err); }
 .item.trans.speaking-now .cap { color: var(--ok); }
-.item:not(:last-of-type) .txt { font-size: .7em; color: var(--muted); }
-.item.trans:not(:last-of-type) .txt { color: var(--trans-old); }
+.item { transition: background .3s, opacity .3s; }
+/* 지금 문장: 노란 바탕 + 검은 글씨(명도 대비) / 바로 지나간 2~3개: 크기 그대로 / 그보다 오래된 것: 작고 흐리게 */
+.item.now { background: var(--now-bg); border-radius: 10px; padding: 8px 12px; margin: 4px 0; border-bottom: 0; }
+.item.now .txt { color: var(--now-fg); font-weight: 700; }
+.item.now.trans .txt { color: var(--now-trans); }
+.item.now .cap { color: #5a4a00; }
+.item.recent .txt { opacity: .88; }
+.item.old .txt { font-size: .72em; color: var(--muted); }
+.item.old.trans .txt { color: var(--trans-old); }
 .interim { padding: 8px 2px; color: var(--muted); font-style: italic; }
 
 .welcome { margin: 8px 0; font-size: 15px; line-height: 1.6; }
@@ -181,7 +191,9 @@ a.ghost { text-decoration: none; display: inline-block; }
 body:not(.viewer) .pane-body.script .seg { cursor: pointer; }
 .seg.head { font-weight: 800; color: var(--accent); }
 .seg.past { color: var(--muted); opacity: .5; font-size: .82em; }
-.seg.now { opacity: 1; font-weight: 800; color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 5px solid var(--accent); border-radius: 6px; padding-left: 12px; }
+.seg.past.recent { color: var(--text); opacity: .8; font-size: 1em; }   /* 바로 지나간 3개는 크게 */
+.seg.now { opacity: 1; font-weight: 800; color: var(--now-fg); background: var(--now-bg); border-left: 6px solid #e0a800; border-radius: 8px; padding-left: 12px; }
+.seg.head.now { color: var(--now-fg); }
 .pane-body.script .item.adlib { border-left: 5px solid var(--adlib); padding-left: 12px; margin: 4px 0; background: color-mix(in srgb, var(--adlib) 8%, transparent); border-radius: 6px; }
 .pane-body.script .item.adlib .txt, .pane-body.script .item.adlib .cap { color: var(--adlib); font-size: 1em; }
 .pane-body.script .item.adlib .cap { font-size: 12px; }
