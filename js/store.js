@@ -2,10 +2,10 @@
 import { LANGS } from './langs.js';
 import { SITUATIONS } from './situations.js';
 
-const K = { settings: 'kfi.settings', key: 'kfi.openaiKey', history: 'kfi.history', usage: 'kfi.usage' };
+const K = { settings: 'kfi.settings', key: 'kfi.openaiKey', gkey: 'kfi.geminiKey', history: 'kfi.history', usage: 'kfi.usage' };
 
 export const DEFAULTS = {
-  mode: 'free',            // free | openai | member(준비 중)
+  mode: 'free',            // free | openai | gemini | member(준비 중)
   left: 'ko',
   right: 'ru',
   speaking: 'auto',        // auto | left | right
@@ -43,7 +43,7 @@ export function loadSettings() {
   if (!LANGS[s.left]) s.left = 'ko';
   if (!LANGS[s.right] || s.right === s.left) s.right = s.left === 'ru' ? 'ko' : 'ru';
   if (!SITUATIONS[s.situation]) s.situation = 'daily';
-  if (!['free', 'openai', 'member'].includes(s.mode)) s.mode = 'free';
+  if (!['free', 'openai', 'gemini', 'member'].includes(s.mode)) s.mode = 'free';
   if (!['auto', 'left', 'right'].includes(s.speaking)) s.speaking = 'auto';
   s.sensitivity = Math.min(10, Math.max(1, +s.sensitivity || 5));
   s.silenceSec = Math.min(2, Math.max(0.4, +s.silenceSec || 1.0));
@@ -59,17 +59,19 @@ export function loadSettings() {
 }
 export const saveSettings = (s) => set(K.settings, JSON.stringify(s));
 
-export const loadKey = () => get(K.key) || '';
-export const saveKey = (k) => (k ? set(K.key, k.trim()) : del(K.key));
+// provider: 'openai'(기본) | 'gemini' — 키는 따로 저장
+const keyName = (provider) => (provider === 'gemini' ? K.gkey : K.key);
+export const loadKey = (provider = 'openai') => get(keyName(provider)) || '';
+export const saveKey = (k, provider = 'openai') => (k ? set(keyName(provider), k.trim()) : del(keyName(provider)));
 export const maskKey = (k) => (!k ? '(없음)' : k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : '••••');
 
 // 개발·시험용: 이 컴퓨터(localhost)에서 열었을 때만 ?apiBase=http://127.0.0.1:... 로 가짜 서버 사용.
 // 실제 배포 주소에서는 무시한다(악성 링크로 키가 다른 서버로 새는 것 방지). 저장하지 않음.
-export function apiBase() {
-  const OFFICIAL = 'https://api.openai.com/v1';
+export function apiBase(provider = 'openai') {
+  const OFFICIAL = provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1';
   try {
     const local = (h) => h === '127.0.0.1' || h === 'localhost';
-    const p = new URLSearchParams(location.search).get('apiBase');
+    const p = new URLSearchParams(location.search).get(provider === 'gemini' ? 'geminiBase' : 'apiBase');
     if (p && local(location.hostname) && local(new URL(p).hostname)) return p;
   } catch (e) { /* 무시 */ }
   return OFFICIAL;

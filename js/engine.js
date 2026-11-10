@@ -38,19 +38,16 @@ export class Interpreter {
     this.recent = [];
   }
 
-  configure(settings, key, base) {
+  // client: OpenAIClient 또는 GeminiClient(같은 모양), 없으면 무료 모드
+  configure(settings, client) {
     this.s = settings;
-    if (key !== this.key || base !== this.base || !this.client) {
-      this.key = key;
-      this.base = base;
-      this.client = key ? new OpenAIClient(key, base) : null;
-    }
+    this.client = client || null;
     this.seg?.setParams(settings.sensitivity, settings.silenceSec, MAX_SEG_SEC);
     if (this.free) this.free.setLang(this.speakingFree());
   }
 
   get pair() { return [this.s.left, this.s.right]; }
-  get mode() { return this.s.mode === 'openai' && this.client ? 'openai' : 'free'; }
+  get mode() { return this.client ? 'cloud' : 'free'; }
   speakingFree() { return this.s.speaking === 'right' ? this.s.right : this.s.left; }
   speakingCode() { return this.s.speaking === 'left' ? this.s.left : this.s.speaking === 'right' ? this.s.right : 'auto'; }
 
@@ -58,7 +55,7 @@ export class Interpreter {
     if (this.running) return;
     this.running = true;
     this.muted = false;
-    if (this.mode === 'openai') {
+    if (this.mode === 'cloud') {
       this.seg = new Segmenter(this.s.sensitivity, this.s.silenceSec, MAX_SEG_SEC);
       this.mic = new MicCapture((b) => this._onBlock(b), { noiseSuppression: !!this.s.noiseSuppression });
       try {
@@ -132,7 +129,7 @@ export class Interpreter {
       try {
         const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
           .filter((w, i, a) => a.indexOf(w) === i).slice(0, 100);
-        const r = await this.client.transcribe(u.samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode) });
+        const r = await this.client.transcribe(u.samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode), situation: this.s.situation, note: this.s.note });
         this.cb.onCost(r.cost);
         result = { r, mode };
       } catch (e) {
@@ -204,7 +201,7 @@ export class Interpreter {
   async translate(entry, ctx = []) {
     const { orig, src, tgt } = entry;
     try {
-      if (this.mode === 'openai') {
+      if (this.mode === 'cloud') {
         try {
           const glossary = this.cb.glossary ? this.cb.glossary() : '';
           const r = await this.client.translate(orig, src, tgt, { situation: this.s.situation, note: this.s.note, context: ctx, glossary });

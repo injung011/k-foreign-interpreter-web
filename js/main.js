@@ -2,6 +2,7 @@ import { Interpreter, situationWarning } from './engine.js';
 import { freeRecognitionSupported } from './free.js';
 import { applyStatic, defaultUiLang, langName, setUiLang, t, UI_LANGS, uiLang } from './i18n.js';
 import { lang, LANGS } from './langs.js';
+import { GEMINI_BASE, GeminiClient } from './gemini.js';
 import { OpenAIClient } from './openai.js';
 import { glossaryKeywords, glossaryText, parseScript, ScriptTracker } from './script.js';
 import { publicEntry, ShareHost, ShareViewer, supabaseConfigured } from './share.js';
@@ -9,7 +10,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.8';
+export const VERSION = 'web v1.9';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -29,8 +30,13 @@ function loadViewerSettings() {
   return v;
 }
 let s = IS_VIEWER ? loadViewerSettings() : store.loadSettings();
-let key = IS_VIEWER ? '' : store.loadKey();
+const keys = IS_VIEWER ? { openai: '', gemini: '' } : { openai: store.loadKey('openai'), gemini: store.loadKey('gemini') };
+const CLOUD = ['openai', 'gemini'];
+let key = ''; // 지금 연결 방식의 키
+const syncKey = () => { key = CLOUD.includes(s.mode) ? keys[s.mode] || '' : ''; };
+const isCloud = () => CLOUD.includes(s.mode) && !!key;
 const base = store.apiBase();
+const geminiBase = store.apiBase('gemini');
 const entries = new Map();
 let wakeLock = null;
 let speakingCount = 0;
@@ -92,7 +98,7 @@ const speaker = new Speaker({
 // (읽는 소리는 다른 언어라 인식에서 걸러지므로, 그 사이에 하는 말을 버리지 않게). 자동·무료 모드만 멈춤.
 function needMute() {
   if (IS_VIEWER || !s.muteWhileSpeaking) return false;
-  return s.speaking === 'auto' || s.mode !== 'openai' || !key;
+  return s.speaking === 'auto' || !isCloud();
 }
 
 const share = new ShareHost({
@@ -103,11 +109,22 @@ const share = new ShareHost({
 const publicState = () => ({ left: s.left, right: s.right, situation: s.situation, note: s.note,
   scriptOn: scriptActive(), scriptId: script ? script.id : null, cur: tracker ? tracker.cur : -1 });
 
+function makeClient(mode = s.mode, k = key) {
+  if (!k) return null;
+  if (mode === 'gemini') return new GeminiClient(k, geminiBase);
+  if (mode === 'openai') return new OpenAIClient(k, base);
+  return null;
+}
+
+let lastClientSig = '';
+let lastClient = null;
 function applyEngine() {
   if (IS_VIEWER) { speaker.configure(null, s.voice); return; }
-  const client = s.mode === 'openai' && key ? new OpenAIClient(key, base) : null;
-  engine.configure(s, s.mode === 'openai' ? key : '', base);
-  speaker.configure(client, s.voice);
+  syncKey();
+  const sig = `${s.mode}|${key}`;
+  if (sig !== lastClientSig) { lastClientSig = sig; lastClient = isCloud() ? makeClient() : null; } // 같은 키면 그대로(모델 선택 기억)
+  engine.configure(s, lastClient);
+  speaker.configure(s.mode === 'openai' ? lastClient : null, s.voice); // Gemini·무료는 기기 목소리로 읽기
 }
 
 // ---------------------------------------------------------------- 화면 그리기
@@ -145,7 +162,7 @@ function render() {
   $('warn').hidden = !warning;
   $('warn').textContent = warning ? '⚠ ' + warning : '';
 
-  const free = s.mode !== 'openai' || !key;
+  const free = !isCloud();
   if (!IS_VIEWER && free && s.speaking === 'auto') s.speaking = 'left';
   for (const b of $('speakingBar').querySelectorAll('button[data-v]')) {
     const v = b.dataset.v;
@@ -159,7 +176,7 @@ function render() {
   const panes = $('panes');
   panes.className = `panes ${s.layout} only-${s.view}` + (s.flipTop ? ' flip' : '');
   $('bothBtn').hidden = s.view === 'both';
-  $('usage').textContent = s.mode === 'openai' && key ? t('usage', { v: store.monthUsage().toFixed(3) }) : (free ? t('freeMode') : '');
+  $('usage').textContent = usageLabel();
   $('startBtn').textContent = engine.running ? t('stop') : t('start');
   if (!engine.running && !IS_VIEWER && $('statusText').dataset.idle !== '0') $('statusText').textContent = t('ready');
   renderShareBar(share.viewers.size);
@@ -178,7 +195,7 @@ function renderEmpty() {
       d.className = 'placeholder';
       d.textContent = t({ wait: 'viewerWait', lost: 'viewerLost', ended: 'viewerEnded', live: 'viewerWait' }[viewerStatus]);
     } else if (side === 'left') {
-      const free = s.mode !== 'openai' || !key;
+      const free = !isCloud();
       d.className = 'welcome';
       d.innerHTML = `<h2>${t('welcomeTitle')}</h2><p>${t('welcomeBody')}</p><ol>
         <li>${t('welcomeStep1')}</li><li>${t('welcomeStep2', { sit: t('sit_' + s.situation) })}</li><li>${t('welcomeStep3')}</li></ol>
@@ -325,10 +342,16 @@ function notice(msg) {
   noticeTimer = setTimeout(() => { n.hidden = true; }, 9000);
 }
 
+function usageLabel() {
+  if (s.mode === 'openai' && key) return t('usage', { v: store.monthUsage().toFixed(3) });
+  if (s.mode === 'gemini' && key) return t('geminiFreeLabel');
+  return t('freeMode');
+}
+
 function addCost(usd) {
   if (!usd || IS_VIEWER) return;
   store.addUsage(usd);
-  if (s.mode === 'openai' && key) $('usage').textContent = t('usage', { v: store.monthUsage().toFixed(3) });
+  $('usage').textContent = usageLabel();
 }
 
 function drawMeter() {
@@ -353,8 +376,8 @@ function setRunning(on) {
 }
 
 async function start() {
-  if (s.mode === 'openai' && !key) { notice(t('noKey')); openSettings(); return; }
-  if ((s.mode !== 'openai' || !key) && !freeRecognitionSupported()) { notice(t('freeUnsupported')); return; }
+  if (CLOUD.includes(s.mode) && !key) { notice(t(s.mode === 'gemini' ? 'noKeyGemini' : 'noKey')); openSettings(); return; }
+  if (!isCloud() && !freeRecognitionSupported()) { notice(t('freeUnsupported')); return; }
   applyEngine();
   setRunning(true);
   setStatus('busy', t('openingMic'));
@@ -770,11 +793,7 @@ function bindScript() {
 // ---------------------------------------------------------------- 설정 화면
 function openSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) r.checked = r.value === s.mode;
-  $('keyInput').value = key;
-  $('keyInput').classList.remove('reveal');
-  $('keyShow').textContent = t('show');
-  $('keyMsg').textContent = key ? t('keyStored', { m: store.maskKey(key) }) : t('keyNone');
-  $('keyBox').classList.toggle('hidden', s.mode !== 'openai');
+  renderKeyBox();
   $('termsInput').value = s.customTerms || '';
   $('voiceSel').value = s.voice;
   $('muteChk').checked = !!s.muteWhileSpeaking;
@@ -789,6 +808,22 @@ function openSettings() {
   $('settingsDlg').showModal();
 }
 
+// 키 칸: 고른 연결 방식(OpenAI / Gemini)의 키와 안내를 보여 줌
+function renderKeyBox() {
+  const cloud = CLOUD.includes(s.mode);
+  $('keyBox').classList.toggle('hidden', !cloud);
+  if (!cloud) return;
+  const gm = s.mode === 'gemini';
+  $('keyLabelTxt').textContent = t(gm ? 'keyLabelGemini' : 'keyLabel');
+  $('keyInput').placeholder = t(gm ? 'keyPhGemini' : 'keyPh');
+  $('keyInput').value = key;
+  $('keyInput').classList.remove('reveal');
+  $('keyShow').textContent = t('show');
+  $('keyMsg').textContent = key ? t('keyStored', { m: store.maskKey(key) }) : t('keyNone');
+  $('guideOpenai').hidden = gm;
+  $('guideGemini').hidden = !gm;
+}
+
 function bindSettings() {
   $('voiceSel').innerHTML = VOICES.map((v) => `<option value="${v}">${v}</option>`).join('');
   $('uiLangSel').innerHTML = Object.entries(UI_LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
@@ -797,7 +832,7 @@ function bindSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) {
     r.onchange = () => {
       s.mode = r.value; save();
-      $('keyBox').classList.toggle('hidden', s.mode !== 'openai');
+      syncKey(); renderKeyBox();
       if (engine.running) { engine.stop(); notice(t('modeChanged')); }
       applyEngine(); render();
     };
@@ -820,22 +855,23 @@ function bindSettings() {
     if (!k) { $('keyMsg').textContent = t('keyEnter'); return; }
     $('keyMsg').textContent = t('keyTesting');
     try {
-      const n = await new OpenAIClient(k, base).check();
+      const n = await makeClient(s.mode, k).check();
       $('keyMsg').textContent = t('keyOk', { n });
     } catch (e) { $('keyMsg').textContent = '✘ ' + (e.userMessage || e.message); }
   };
   $('keySave').onclick = () => {
     const k = $('keyInput').value.trim();
-    if (k && !k.startsWith('sk-') && !confirm(t('keyNotSk'))) return;
-    store.saveKey(k); key = k;
+    if (k && s.mode === 'openai' && !k.startsWith('sk-') && !confirm(t('keyNotSk'))) return;
+    if (k && s.mode === 'gemini' && !k.startsWith('AIza') && !confirm(t('keyNotAiza'))) return;
+    store.saveKey(k, s.mode); keys[s.mode] = k; key = k;
     $('keyMsg').textContent = k ? t('keySaved', { m: store.maskKey(k) }) : t('keyDeleted');
     applyEngine(); render();
   };
   $('keyDel').onclick = () => {
     if (!confirm(t('keyConfirmDel'))) return;
-    store.saveKey(''); key = ''; $('keyInput').value = '';
+    store.saveKey('', s.mode); keys[s.mode] = ''; key = ''; $('keyInput').value = '';
     $('keyMsg').textContent = t('keyDeleted');
-    if (engine.running && s.mode === 'openai') engine.stop();
+    if (engine.running && CLOUD.includes(s.mode)) engine.stop();
     applyEngine(); render();
   };
   $('termsInput').onchange = () => { s.customTerms = $('termsInput').value; save(); applyEngine(); };

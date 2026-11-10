@@ -39,9 +39,10 @@ RU: 러시아어 구간
 |---|---|---|
 | 무료 모드 | 없음 | 크롬 내장 음성 인식 + 무료 번역. 말하는 언어를 직접 골라야 함 |
 | 내 OpenAI 키 | 키 주인의 OpenAI 계정 | 자동 언어 감지, 높은 정확도, 상황별 통역(gpt-transcribe + 번역 모델) |
+| Google Gemini 키 | 무료 구간(결제 미등록 시 요금 없음) | 받아 적기+번역을 한 번의 요청으로(분당 한도 절약), 자동 언어 감지. 분당·하루 한도, 무료 구간 내용은 구글 개선에 쓰일 수 있음. 읽기는 기기 목소리 |
 | 회원 로그인 | 관리자 | 준비 중 (관리자 승인 회원만, 서버에서 키 보관) |
 
-키는 사용자의 브라우저에만 저장되고, 이 저장소나 다른 서버로 보내지지 않습니다(OpenAI로 직접 호출).
+키(OpenAI·Gemini 각각)는 사용자의 브라우저에만 저장되고, 이 저장소나 다른 서버로 보내지지 않습니다(OpenAI·Google로 직접 호출).
 
 ## 개발
 정적 파일만으로 동작합니다(빌드 단계 없음). GitHub Pages로 배포합니다.
@@ -49,6 +50,7 @@ RU: 러시아어 구간
 ```
 node --test tests/*.test.js                 # 핵심 로직 단위 시험
 python3 tests/script_test.py /tmp/out2       # 대본 모드(가짜 인식 결과로 위치 따라가기·파란 글씨·공유)
+python3 tests/gemini_test.py /tmp/out4       # Gemini 연결(가짜 서버: 틀린 키, 분당 한도, 모델 없음, 자동 언어)
 python3 tests/stress_test.py /tmp/out3       # 빠르게 쉬지 않고 75초 말하기 + 느리고 가끔 실패하는 서버 → 놓치는 말이 없는지
 python3 tests/browser_test.py /tmp/out       # 실제 크롬 + 가짜 마이크 + 가짜 OpenAI 서버로 전체 흐름 시험
 python3 -m http.server 8000                  # 로컬 실행 → http://127.0.0.1:8000

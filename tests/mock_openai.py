@@ -20,7 +20,7 @@ QUEUE = []  # 시험에서 정해 둔 '들린 말' 목록(POST /v1/_queue {"text
 
 def _cors(h):
     h.send_header('Access-Control-Allow-Origin', '*')
-    h.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+    h.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, x-goog-api-key')
     h.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
 
 
@@ -66,7 +66,61 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
+    # ---------------- 가짜 Gemini (/v1beta/...) 키: AIza-good
+    # MOCK_GEMINI_RATE_ONCE=1 → 첫 번째 생성 요청은 분당 한도(429, 2초 뒤 다시) / MOCK_GEMINI_NO_THINK=1 → thinkingConfig 거부
+    def _gemini(self, raw=None):
+        if self.headers.get('x-goog-api-key') != 'AIza-good':
+            body = json.dumps({'error': {'code': 400, 'message': 'API key not valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT',
+                                         'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}]}}).encode()
+            self.send_response(400); _cors(self); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
+        if raw is None:
+            return _ok(self, {'models': [{'name': 'models/gemini-3.8-flash'}, {'name': 'models/gemini-3.6-flash'}]})
+        body = json.loads(raw)
+        model = self.path.split('/models/')[1].split(':')[0]
+        gen = body.get('generationConfig', {})
+        H.gm_n = getattr(H, 'gm_n', 0) + 1
+        entry = {'path': 'gemini', 'model': model, 'think': 'thinkingConfig' in gen, 'sys': body.get('systemInstruction', {}).get('parts', [{}])[0].get('text', '')}
+        LOG.append(entry)
+        def err(code, status, msg, details=None):
+            b = json.dumps({'error': {'code': code, 'message': msg, 'status': status, 'details': details or []}}).encode()
+            self.send_response(code); _cors(self); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b))); self.end_headers(); self.wfile.write(b)
+        if os.environ.get('MOCK_GEMINI_NO_THINK') and 'thinkingConfig' in gen:
+            entry['rejected'] = 'think'
+            return err(400, 'INVALID_ARGUMENT', 'Invalid JSON payload received. Unknown name "thinkingConfig"')
+        if os.environ.get('MOCK_GEMINI_RATE_ONCE') and not getattr(H, 'gm_rated', False):
+            H.gm_rated = True
+            entry['rejected'] = 'rate'
+            return err(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded for metric: generate_content_free_tier_requests, limit: 10 per minute',
+                       [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '2s'}])
+        if model == 'gemini-3.8-flash' and os.environ.get('MOCK_GEMINI_NO_38'):
+            return err(404, 'NOT_FOUND', 'models/gemini-3.8-flash is not found for API version v1beta')
+        parts = body['contents'][0]['parts']
+        audio = next((p['inlineData'] for p in parts if 'inlineData' in p), None)
+        def reply(text):
+            return _ok(self, {'candidates': [{'content': {'parts': [{'text': text}], 'role': 'model'}}]})
+        if not audio:                              # 번역만 요청
+            entry['kind'] = 'translate'
+            return reply('[GM-TR] ' + parts[-1]['text'].split('\n')[-1])
+        import base64
+        with wave.open(io.BytesIO(base64.b64decode(audio['data']))) as w:
+            secs = w.getnframes() / w.getframerate()
+        entry['kind'] = 'audio'; entry['secs'] = secs; entry['mime'] = audio.get('mimeType')
+        if secs < 1.2:
+            return reply(json.dumps({'lang': '', 'text': '', 'translation': ''}))
+        langs = gen.get('responseSchema', {}).get('properties', {}).get('lang', {}).get('enum', ['ko'])
+        H.gm_k = getattr(H, 'gm_k', 0) + 1
+        lg = langs[(H.gm_k - 1) % len(langs)]
+        text = {'ko': f'제미니가 받아 적은 한국어 문장 {H.gm_k}', 'ru': f'Русская фраза от Gemini {H.gm_k}',
+                'en': f'Gemini heard this English sentence {H.gm_k}'}.get(lg, f'text {lg} {H.gm_k}')
+        tr = {'ko': f'[GM-RU] перевод {H.gm_k}', 'ru': f'[GM-KO] 번역 {H.gm_k}', 'en': f'[GM-KO] 번역 {H.gm_k}'}.get(lg, '[GM]')
+        return reply(json.dumps({'lang': lg, 'text': text, 'translation': tr}, ensure_ascii=False))
+
     def do_GET(self):
+        if self.path.startswith('/v1beta/'):
+            return self._gemini()
+        if self.path.endswith('/_log') and self.headers.get('x-goog-api-key') == 'AIza-good':
+            return _ok(self, {'log': LOG[-80:]})
         if not self._auth():
             return
         if self.path.endswith('/_log'):
@@ -77,6 +131,9 @@ class H(BaseHTTPRequestHandler):
             _err(self, 404, 'not_found', 'no route')
 
     def do_POST(self):
+        if self.path.startswith('/v1beta/'):
+            n = int(self.headers.get('Content-Length', 0))
+            return self._gemini(self.rfile.read(n))
         if not self._auth():
             return
         n = int(self.headers.get('Content-Length', 0))

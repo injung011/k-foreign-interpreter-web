@@ -147,10 +147,11 @@
       <h3 data-i18n="secMode"></h3>
       <label class="opt"><input type="radio" name="mode" value="free"> <span><b data-i18n="modeFree"></b><br><small data-i18n="modeFreeDesc"></small></span></label>
       <label class="opt"><input type="radio" name="mode" value="openai"> <span><b data-i18n="modeOpenai"></b><br><small data-i18n="modeOpenaiDesc"></small></span></label>
+      <label class="opt"><input type="radio" name="mode" value="gemini"> <span><b data-i18n="modeGemini"></b> <em class="tag" data-i18n="freeTag"></em><br><small data-i18n="modeGeminiDesc"></small></span></label>
       <label class="opt disabled"><input type="radio" name="mode" value="member" disabled> <span><b data-i18n="modeMember"></b> <em class="tag" data-i18n="soon"></em><br><small data-i18n="modeMemberDesc"></small></span></label>
 
       <div id="keyBox" class="keybox">
-        <label class="field"><span data-i18n="keyLabel"></span>
+        <label class="field"><span id="keyLabelTxt"></span>
           <span class="keyrow">
             <input id="keyInput" class="masked" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-i18n-ph="keyPh">
             <button id="keyShow" class="ghost" type="button" data-i18n="show"></button>
@@ -164,7 +165,16 @@
         </div>
         <p id="keyMsg" class="hint"></p>
         <p class="hint" data-i18n="pasteHint"></p>
-        <details class="guide">
+        <details class="guide" id="guideGemini" hidden>
+          <summary data-i18n="gGuideTitle"></summary>
+          <ol>
+            <li data-i18n-html="gGuide1"></li>
+            <li data-i18n-html="gGuide2"></li>
+            <li data-i18n-html="gGuide3"></li>
+          </ol>
+          <p class="hint" data-i18n="gGuideNote"></p>
+        </details>
+        <details class="guide" id="guideOpenai">
           <summary data-i18n="guideTitle"></summary>
           <ol>
             <li data-i18n-html="guide1"></li>
