@@ -2,7 +2,8 @@
 import { MicCapture } from './audio.js';
 import { FreeRecognizer, freeTranslate } from './free.js';
 import { langName, t } from './i18n.js';
-import { lang, LANGS, sameScript } from './langs.js';
+import { asrCodes, lang, LANGS, sameScript } from './langs.js';
+import { RealtimeASR, Upsampler } from './realtime.js';
 import { OpenAIClient, OpenAIError } from './openai.js';
 import { keywords, SITUATIONS } from './situations.js';
 import { Segmenter } from './segmenter.js';
@@ -35,6 +36,10 @@ export class Interpreter {
     this.seqOut = 0;
     this.done = new Map();
     this.lost = 0;
+    this.rt = null;
+    this.rtPending = [];
+    this.rtById = new Map();
+    this.rtStreaming = false;
     this.recent = [];
   }
 
@@ -57,10 +62,15 @@ export class Interpreter {
     this.muted = false;
     if (this.mode === 'cloud') {
       this.seg = new Segmenter(this.s.sensitivity, this.s.silenceSec, MAX_SEG_SEC);
+      this.ring = [];
+      this.prevActive = false;
+      this.rtFailCount = 0;
       this.mic = new MicCapture((b) => this._onBlock(b), { noiseSuppression: !!this.s.noiseSuppression });
       try {
         const name = await this.mic.start();
+        this.micName = name;
         this.cb.onStatus('listening', `${t('listening')} · ${name || 'mic'}`);
+        if (this._rtWanted()) this._rtConnect();
       } catch (e) {
         this.running = false;
         this.cb.onStatus('error', micError(e));
@@ -82,10 +92,13 @@ export class Interpreter {
     this.running = false;
     if (this.mic) {
       const tail = this.seg?.flush();
-      if (tail) this._queue(tail);
+      if (tail) this._submit(tail);
       this.mic.stop();
       this.mic = null;
     }
+    this.rtStreaming = false;
+    // 실시간 연결은 남은 결과를 받을 때까지 잠시 두었다가 닫음(못 받은 건 기본 방식으로)
+    if (this.rt) { const rt = this.rt; this.rt = null; setTimeout(() => { rt.close(); this._rtFallbackAll(); }, 8000); }
     if (this.free) { this.free.stop(); this.free = null; }
     this.cb.onInterim('', null);
     this.cb.onStopped();
@@ -94,7 +107,10 @@ export class Interpreter {
   // 읽어 주는 동안 마이크 무시(되울림 방지)
   mute(on) {
     this.muted = on;
-    if (on) this.seg?.reset();
+    if (on) {
+      if (this.rtStreaming) { const tail = this.seg?.flush(); if (tail) this._submit(tail); else this.rtStreaming = false; }
+      this.seg?.reset();
+    }
     if (this.free) this.free.pause(on);
   }
 
@@ -102,14 +118,109 @@ export class Interpreter {
     if (!this.running || this.muted) return;
     const r = this.seg.feed(block);
     this.cb.onLevel(r.level, r.threshold, r.active);
-    for (const u of r.utterances) this._queue(u);
+    // 실시간: 말이 시작되면(앞 여유 포함) 그때부터 소리를 계속 흘려보냄
+    this.ring = (this.ring || []);
+    this.ring.push(block);
+    if (this.ring.length > 9) this.ring.shift();
+    if (this.rt && this.rt.ready) {
+      if (r.active && !this.rtStreaming && !this.prevActive) { // 문장이 막 시작될 때만(중간부터면 다음 문장부터)
+        this.rtStreaming = true;
+        for (const b of this.ring) this.rt.append(this.up.process(b));
+      } else if (this.rtStreaming) this.rt.append(this.up.process(block));
+    }
+    for (const u of r.utterances) this._submit(u);
+    if (!r.active) this.rtStreaming = false;
+    this.prevActive = r.active;
+  }
+
+  // 한 문장(조각)이 끝남 → 실시간 연결이면 commit, 아니면 기본 방식(파일로 보내기)
+  _submit(samples) {
+    const seq = this.seqIn++;
+    if (this.rt && this.rt.ready && this.rtStreaming) {
+      this.rt.commit();
+      const p = { seq, samples, timer: setTimeout(() => this._rtGiveUp(p), 15000) };
+      this.rtPending.push(p);
+      this.cb.onStatus('recognizing', t('recognizing'));
+      return;
+    }
+    this.utts.push({ samples, seq });
+    this._pump();
   }
 
   // 받아 적기: 버리지 않고, 최대 3개를 동시에 보내고, 결과는 말한 순서대로 화면에 냄
-  _queue(samples) {
-    this.utts.push({ samples, seq: this.seqIn++ });
+  _queue(samples) { this._submit(samples); }
+
+  // ---------------- 실시간(스트리밍) 받아 적기
+  _rtWanted() {
+    if (!this.s.realtime || !(this.client instanceof OpenAIClient)) return false;
+    // 같은 글자 체계의 두 언어를 '자동'으로 구분해야 하면 기본 방식(실시간은 언어를 알려 주지 않음)
+    if (this.speakingCode() === 'auto' && sameScript(...this.pair)) return false;
+    return true;
+  }
+
+  async _rtConnect() {
+    if (this.rtConnecting) return;
+    this.rtConnecting = true;
+    const mode = this.speakingCode();
+    const langs = [...new Set((mode === 'auto' ? this.pair : [mode]).flatMap(asrCodes))];
+    const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
+      .filter((w, i, a) => a.indexOf(w) === i).slice(0, 60);
+    const rt = new RealtimeASR(this.client.key, this.rtBase || this.client.base, {
+      onCommitted: (id) => {
+        const p = this.rtPending.find((x) => !x.id);
+        if (p) { p.id = id; this.rtById.set(id, p); }
+      },
+      onDelta: (id, textSoFar) => {
+        const code = mode !== 'auto' ? mode : (langFromText(textSoFar, this.pair) || this.pair[0]);
+        this.cb.onInterim(textSoFar, code);
+      },
+      onCompleted: (id, text) => {
+        const p = this.rtById.get(id);
+        if (!p) return;
+        this._rtDone(p, { r: { text, lang: null, cost: 0 }, mode });
+      },
+      onFailed: (id) => { const p = this.rtById.get(id); if (p) this._rtGiveUp(p); },
+      onClosed: () => {
+        if (this.rt === rt) this.rt = null;
+        this.rtStreaming = false;
+        this._rtFallbackAll();
+        if (this.running) { this.cb.onNotice(t('rtLost')); setTimeout(() => this.running && !this.rt && this._rtWanted() && this._rtConnect(), 5000); }
+      },
+      onError: () => {},
+    });
+    try {
+      await rt.connect({ languages: langs, prompt: this._asrPrompt(mode), keywords: kw });
+      if (!this.running) { rt.close(); return; }
+      this.rt = rt;
+      this.up = new Upsampler();
+      this.rtMode = mode;
+      this.cb.onStatus('listening', `${t('listening')} · ⚡${t('rtOn')}`);
+    } catch (e) {
+      this.rtFailCount = (this.rtFailCount || 0) + 1;
+      if (this.rtFailCount === 1) this.cb.onNotice(t('rtFail'));
+    } finally { this.rtConnecting = false; }
+  }
+
+  _rtDone(p, result) {
+    clearTimeout(p.timer);
+    this.rtPending = this.rtPending.filter((x) => x !== p);
+    if (p.id) this.rtById.delete(p.id);
+    // 대략 요금(받아 적은 소리 길이 기준)
+    this.cb.onCost((p.samples.length / 16000 / 60) * 0.006);
+    this._deliver(p.seq, result.r.text ? result : null);
+    if (!this.rtPending.length && !this.utts.length && !this.inflight && this.running) this.cb.onStatus('listening', `${t('listening')} · ⚡${t('rtOn')}`);
+  }
+
+  // 실시간으로 결과가 안 오면 그 조각은 기본 방식으로 다시
+  _rtGiveUp(p) {
+    clearTimeout(p.timer);
+    this.rtPending = this.rtPending.filter((x) => x !== p);
+    if (p.id) this.rtById.delete(p.id);
+    this.utts.push({ samples: p.samples, seq: p.seq });
     this._pump();
   }
+
+  _rtFallbackAll() { for (const p of [...this.rtPending]) this._rtGiveUp(p); }
 
   _pump() {
     while (this.inflight < MAX_PARALLEL && this.utts.length) {
@@ -129,7 +240,8 @@ export class Interpreter {
       try {
         const kw = [...(this.cb.asrKeywords ? this.cb.asrKeywords() : []), ...keywords(this.s.situation, this.s.customTerms, this.pair, matchesLang)]
           .filter((w, i, a) => a.indexOf(w) === i).slice(0, 100);
-        const r = await this.client.transcribe(u.samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode), situation: this.s.situation, note: this.s.note });
+        const r = await this.client.transcribe(u.samples, { mode, pair: this.pair, keywords: kw, prompt: this._asrPrompt(mode), situation: this.s.situation, note: this.s.note,
+          glossary: this.cb.glossary ? this.cb.glossary() : '', reference: this.cb.reference ? this.cb.reference() : '' });
         this.cb.onCost(r.cost);
         result = { r, mode };
       } catch (e) {
@@ -142,13 +254,19 @@ export class Interpreter {
         else await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); // 잠깐 쉬고 다시 시도
       }
     }
-    this.done.set(u.seq, result);
+    this._deliver(u.seq, result);
+  }
+
+  // 결과를 말한 순서대로 화면에 냄(실시간·기본 방식 섞여도)
+  _deliver(seq, result) {
+    this.done.set(seq, result);
     while (this.done.has(this.seqOut)) {
       const d = this.done.get(this.seqOut);
       this.done.delete(this.seqOut);
       this.seqOut++;
       if (d) this._accept(d.r, d.mode);
     }
+    if (result) this.cb.onInterim('', null);
   }
 
   _accept(r, mode) {
@@ -201,11 +319,17 @@ export class Interpreter {
 
   async translate(entry, ctx = []) {
     const { orig, src, tgt } = entry;
+    if (entry.preset) { // 대본 참고 모드: 한 구간을 거의 그대로 말함 → 준비된 번역을 바로
+      entry.trans = entry.preset; entry.ok = true;
+      this.cb.onTranslated(entry);
+      return;
+    }
     try {
       if (this.mode === 'cloud') {
         try {
           const glossary = this.cb.glossary ? this.cb.glossary() : '';
-          const r = await this.client.translate(orig, src, tgt, { situation: this.s.situation, note: this.s.note, context: ctx, glossary });
+          const reference = this.cb.reference ? this.cb.reference() : '';
+          const r = await this.client.translate(orig, src, tgt, { situation: this.s.situation, note: this.s.note, context: ctx, glossary, reference });
           this.cb.onCost(r.cost);
           entry.trans = r.text; entry.ok = true;
           return;

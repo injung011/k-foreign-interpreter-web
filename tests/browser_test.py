@@ -67,11 +67,11 @@ def main():
                 '--no-proxy-server'])
             for name, viewport, settings in [
                 ('phone_openai', {'width': 412, 'height': 915},
-                 {'mode': 'openai', 'situation': 'church', 'note': '선교 보고회', 'readRight': True, 'fontSize': 22}),
+                 {'mode': 'openai', 'realtime': False, 'situation': 'church', 'note': '선교 보고회', 'readRight': True, 'fontSize': 22}),
                 ('desktop_openai', {'width': 1366, 'height': 768},
-                 {'mode': 'openai', 'situation': 'hospital', 'note': '소아과 진료', 'fontSize': 26}),
+                 {'mode': 'openai', 'realtime': False, 'situation': 'hospital', 'note': '소아과 진료', 'fontSize': 26}),
                 ('phone_ph', {'width': 412, 'height': 915},
-                 {'mode': 'openai', 'situation': 'church', 'note': '필리핀 청소년 집회 간증', 'left': 'ko', 'right': 'en-ph', 'order': 'top', 'fontSize': 22}),
+                 {'mode': 'openai', 'realtime': False, 'situation': 'church', 'note': '필리핀 청소년 집회 간증', 'left': 'ko', 'right': 'en-ph', 'order': 'top', 'fontSize': 22}),
             ]:
                 ctx = browser.new_context(viewport=viewport, permissions=['microphone'])
                 logs = []
@@ -133,7 +133,7 @@ def main():
             host = ctx.new_page()
             host.on('pageerror', lambda e: print('HOST PAGEERROR', e))
             host.add_init_script("if (!localStorage.getItem('kfi.settings')) {"
-                                 "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', situation:'church', uiLang:'ko'}));"
+                                 "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', realtime:false, situation:'church', uiLang:'ko'}));"
                                  "localStorage.setItem('kfi.openaiKey', 'sk-good');}")
             host.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1&shareVia=local')
             host.wait_for_timeout(600)

@@ -250,9 +250,85 @@ class H(BaseHTTPRequestHandler):
                           'usage': {'input_tokens': 300, 'output_tokens': 40}})
 
 
+# ---------------- 가짜 실시간 받아 적기(웹소켓) — 공식 안내의 이벤트 이름을 따름
+# 포트: HTTP 포트 + 1. MOCK_RT_OFF=1 → 안 켬(연결 실패 시험) / MOCK_RT_REJECT=1 → 세션 설정 거부
+# MOCK_RT_FAIL_EVERY=N → N번째 문장마다 받아 적기 실패 이벤트
+def start_realtime(port):
+    import asyncio
+    import base64
+    from websockets.asyncio.server import serve
+
+    async def respond(ws, item, secs, langs):
+        await ws.send(json.dumps({'type': 'input_audio_buffer.committed', 'item_id': item, 'previous_item_id': None}))
+        n = int(item.split('_')[1])
+        if os.environ.get('MOCK_RT_FAIL_EVERY') and n % int(os.environ['MOCK_RT_FAIL_EVERY']) == 0:
+            await asyncio.sleep(0.2)
+            await ws.send(json.dumps({'type': 'conversation.item.input_audio_transcription.failed', 'item_id': item, 'content_index': 0,
+                                      'error': {'message': 'mock failure'}}))
+            return
+        if secs < 1.0:
+            text = ''
+        elif QUEUE:
+            text = QUEUE.pop(0)
+        else:
+            text = {'ko': f'실시간으로 받아 적은 한국어 문장 {n}', 'ru': f'Фраза в реальном времени {n}', 'en': f'Real-time English sentence {n}'}.get(langs[0], f'rt {n}')
+        acc = ''
+        for w in text.split(' '):
+            await asyncio.sleep(0.05)
+            await ws.send(json.dumps({'type': 'conversation.item.input_audio_transcription.delta', 'item_id': item, 'content_index': 0, 'delta': w + ' '}))
+            acc += w + ' '
+        LOG.append({'path': 'rt-done', 'item': item, 'text': text})
+        await ws.send(json.dumps({'type': 'conversation.item.input_audio_transcription.completed', 'item_id': item, 'content_index': 0, 'transcript': text}))
+
+    async def handler(ws):
+        protos = ws.request.headers.get('Sec-WebSocket-Protocol', '')
+        LOG.append({'path': 'rt-open', 'url': ws.request.path, 'auth_ok': 'openai-insecure-api-key.sk-good' in protos})
+        if 'openai-insecure-api-key.sk-good' not in protos:
+            await ws.send(json.dumps({'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Incorrect API key'}}))
+            await ws.close(4001)
+            return
+        await ws.send(json.dumps({'type': 'session.created', 'session': {'type': 'transcription'}}))
+        buf = bytearray()
+        n = 0
+        langs = ['ko']
+        async for raw in ws:
+            m = json.loads(raw)
+            t = m.get('type')
+            if t == 'session.update':
+                sess = m.get('session', {})
+                LOG.append({'path': 'rt-session', 'session': sess})
+                if os.environ.get('MOCK_RT_REJECT'):
+                    await ws.send(json.dumps({'type': 'error', 'error': {'message': 'Unknown parameter: session.audio.input.transcription.delay'}}))
+                    continue
+                langs = sess.get('audio', {}).get('input', {}).get('transcription', {}).get('languages') or langs
+                await ws.send(json.dumps({'type': 'session.updated', 'session': sess}))
+            elif t == 'input_audio_buffer.append':
+                buf += base64.b64decode(m['audio'])
+            elif t == 'input_audio_buffer.commit':
+                if len(buf) < 4800:
+                    await ws.send(json.dumps({'type': 'error', 'error': {'message': 'buffer too small'}}))
+                    continue
+                n += 1
+                secs = len(buf) / 48000
+                LOG.append({'path': 'rt-commit', 'item': f'item_{n}', 'secs': secs})
+                buf = bytearray()
+                asyncio.create_task(respond(ws, f'item_{n}', secs, langs))
+
+    async def main():
+        async with serve(handler, '127.0.0.1', port, subprotocols=['realtime']):
+            await asyncio.Future()
+
+    threading.Thread(target=lambda: asyncio.run(main()), daemon=True).start()
+
+
 def start(port=0):
     srv = ThreadingHTTPServer(('127.0.0.1', port), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    if not os.environ.get('MOCK_RT_OFF'):
+        try:
+            start_realtime(srv.server_address[1] + 1)
+        except ImportError:
+            pass
     return srv, f'http://127.0.0.1:{srv.server_address[1]}/v1'
 
 

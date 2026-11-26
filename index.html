@@ -101,6 +101,10 @@
     <h2>📜 <span data-i18n="scriptTitle"></span></h2>
     <p class="hint" data-i18n-html="scriptDesc"></p>
     <p id="scriptInfo" class="script-info"></p>
+    <div class="script-use">
+      <label class="opt"><input type="radio" name="scriptUse" value="ref"> <span><b data-i18n="scriptUseRef"></b><br><small data-i18n="scriptUseRefDesc"></small></span></label>
+      <label class="opt"><input type="radio" name="scriptUse" value="follow"> <span><b data-i18n="scriptUseFollow"></b><br><small data-i18n="scriptUseFollowDesc"></small></span></label>
+    </div>
     <div class="row">
       <label class="ghost filebtn"><input id="scriptFile" type="file" accept=".txt,text/plain" hidden><span data-i18n="scriptFile"></span></label>
     </div>
@@ -165,6 +169,7 @@
           <button id="keyDel" class="ghost danger" type="button" data-i18n="del"></button>
         </div>
         <p id="keyMsg" class="hint"></p>
+        <label class="switch" id="rtRow"><input id="rtChk" type="checkbox"> <span><span data-i18n="rtLabel"></span> <small data-i18n="rtHint"></small></span></label>
         <p class="hint" data-i18n="pasteHint"></p>
         <details class="guide" id="guideGemini" hidden>
           <summary data-i18n="gGuideTitle"></summary>

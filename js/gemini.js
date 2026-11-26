@@ -112,7 +112,7 @@ export class GeminiClient {
   }
 
   // 반환 { text, lang|null, model, seconds, cost:0 } — 같은 요청에서 받은 번역은 기억해 둠
-  async transcribe(samples, { mode = 'auto', pair = ['ko', 'ru'], keywords = [], prompt = '', situation = 'daily', note = '' } = {}) {
+  async transcribe(samples, { mode = 'auto', pair = ['ko', 'ru'], keywords = [], prompt = '', situation = 'daily', note = '', glossary = '', reference = '' } = {}) {
     const wav = toWav(samples);
     const seconds = samples.length / 16000;
     const langs = mode === 'auto' ? pair : [mode];
@@ -128,7 +128,8 @@ export class GeminiClient {
       'Step 1: write exactly what was said (verbatim, no summarizing, no added words). If there is no clear speech, return empty strings.',
       `Step 2: ${tgtNote}`,
       'Translation rules:',
-      translateInstructions(langs[0], target(langs[0]), situation, note).split('\n').slice(1).join('\n'),
+      translateInstructions(langs[0], target(langs[0]), situation, note, glossary).split('\n').slice(1).join('\n'),
+      reference ? `Prepared script around this point (the speaker roughly follows it; if the speech says the same thing, reuse its prepared translation wording):\n${reference}` : '',
       keywords.length ? `Names and terms that may appear: ${keywords.slice(0, 60).join(', ')}` : '',
       prompt ? `Context:\n${prompt}` : '',
     ].filter(Boolean).join('\n');
@@ -158,13 +159,13 @@ export class GeminiClient {
   }
 
   // 반환 { text, model, cost:0 } — 받아 적을 때 같이 받은 번역이 있으면 요청 없이 바로
-  async translate(text, src, tgt, { situation = 'daily', note = '', context = [], glossary = '' } = {}) {
+  async translate(text, src, tgt, { situation = 'daily', note = '', context = [], glossary = '', reference = '' } = {}) {
     for (const [k, v] of this.cache) {
       if (v.tgt === tgt && (k === text || k.replace(/\s+/g, '') === text.replace(/\s+/g, ''))) { this.cache.delete(k); return { text: v.text, model: this.model, cost: 0 }; }
     }
     const instructions = translateInstructions(src, tgt, situation, note, glossary);
     const ctx = context.filter(Boolean).slice(-3);
-    const user = (ctx.length ? `Previous sentences (context only, do NOT translate):\n${ctx.join('\n')}\n\n` : '')
+    const user = (reference ? `Prepared script around this point (reuse its wording if the sentence matches):\n${reference}\n\n` : '') + (ctx.length ? `Previous sentences (context only, do NOT translate):\n${ctx.join('\n')}\n\n` : '')
       + `Translate ${lang(src).en} → ${lang(tgt).en}:\n${text}`;
     const { js, model } = await this._generate({
       systemInstruction: { parts: [{ text: instructions }] },

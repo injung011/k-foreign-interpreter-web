@@ -226,3 +226,21 @@ test('필리핀: 영어(필리핀)은 영어+따갈로그로 받아 적고, 결�
   assert.equal(pairCodeFor('ko', ['ko', 'en-ph']), 'ko');
   assert.equal(pairCodeFor('ja', ['ko', 'en-ph']), null);
 });
+
+test('실시간: 16kHz → 24kHz 변환이 길이·파형을 지킴(블록을 이어 붙여도 매끄럽게)', async () => {
+  globalThis.btoa = globalThis.btoa || ((s) => Buffer.from(s, 'binary').toString('base64'));
+  const { Upsampler } = await import('../js/realtime.js');
+  const up = new Upsampler();
+  const blocks = [];
+  let total = 0;
+  for (let b = 0; b < 10; b++) {
+    const x = new Float32Array(1600);
+    for (let i = 0; i < 1600; i++) x[i] = 0.5 * Math.sin(2 * Math.PI * 300 * (b * 1600 + i) / 16000);
+    const y = up.process(x); blocks.push(y); total += y.length;
+  }
+  assert.ok(Math.abs(total - 24000) <= 2, `길이 ${total}`);
+  const all = new Int16Array(total); let o = 0; for (const y of blocks) { all.set(y, o); o += y.length; }
+  let err = 0;
+  for (let k = 0; k < total; k++) err = Math.max(err, Math.abs(all[k] / 32767 - 0.5 * Math.sin(2 * Math.PI * 300 * k / 24000)));
+  assert.ok(err < 0.02, `오차 ${err}`);
+});
