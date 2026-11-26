@@ -90,9 +90,9 @@ export async function freeTranslate(text, src, tgt) {
       const key = `${src}-${tgt}`;
       let t = translators.get(key);
       if (!t) {
-        const avail = await self.Translator.availability({ sourceLanguage: src, targetLanguage: tgt });
+        const avail = await self.Translator.availability({ sourceLanguage: googleCode(src), targetLanguage: googleCode(tgt) });
         if (avail !== 'unavailable') {
-          t = await self.Translator.create({ sourceLanguage: src, targetLanguage: tgt });
+          t = await self.Translator.create({ sourceLanguage: googleCode(src), targetLanguage: googleCode(tgt) });
           translators.set(key, t);
         }
       }

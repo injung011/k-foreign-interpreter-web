@@ -1,6 +1,6 @@
 // OpenAI 호출 (브라우저에서 사용자의 키로 직접 호출)
 import { t } from './i18n.js';
-import { lang } from './langs.js';
+import { asrCodes, lang, pairCodeFor } from './langs.js';
 import { translateInstructions } from './situations.js';
 import { looksTranslated } from './textfilter.js';
 import { toWav, wavDuration } from './wav.js';
@@ -71,6 +71,7 @@ export class OpenAIClient {
     const wav = toWav(samples);
     const seconds = samples.length / 16000;
     const langs = mode === 'auto' ? pair : [mode];
+    const asr = [...new Set(langs.flatMap(asrCodes))];
     const models = this.asrModel ? [this.asrModel] : ASR_MODELS;
     let last;
     for (const model of models) {
@@ -78,15 +79,15 @@ export class OpenAIClient {
       fd.append('file', new Blob([wav], { type: 'audio/wav' }), 'speech.wav');
       fd.append('model', model);
       if (model === 'gpt-transcribe') {
-        langs.forEach((l) => fd.append('languages[]', l));
+        asr.forEach((l) => fd.append('languages[]', l));
         keywords.forEach((k) => fd.append('keywords[]', k));
-      } else if (langs.length === 1) fd.append('language', langs[0]);
+      } else if (asr.length === 1) fd.append('language', asr[0]);
       if (prompt) fd.append('prompt', prompt);
       try {
         const res = await this._fetch('/audio/transcriptions', { method: 'POST', body: fd }, 30000);
         const js = await res.json();
         this.asrModel = model;
-        const code = (js.languages || []).map((x) => (x.code || '').slice(0, 2).toLowerCase()).find((c) => langs.includes(c));
+        const code = (js.languages || []).map((x) => pairCodeFor((x.code || '').slice(0, 2).toLowerCase(), langs)).find(Boolean);
         return { text: (js.text || '').trim(), lang: code || null, model, seconds, cost: (seconds / 60) * (ASR_PER_MIN[model] ?? 0.006) };
       } catch (e) {
         last = e;

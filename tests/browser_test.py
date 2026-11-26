@@ -70,6 +70,8 @@ def main():
                  {'mode': 'openai', 'situation': 'church', 'note': '선교 보고회', 'readRight': True, 'fontSize': 22}),
                 ('desktop_openai', {'width': 1366, 'height': 768},
                  {'mode': 'openai', 'situation': 'hospital', 'note': '소아과 진료', 'fontSize': 26}),
+                ('phone_ph', {'width': 412, 'height': 915},
+                 {'mode': 'openai', 'situation': 'church', 'note': '필리핀 청소년 집회 간증', 'left': 'ko', 'right': 'en-ph', 'order': 'top', 'fontSize': 22}),
             ]:
                 ctx = browser.new_context(viewport=viewport, permissions=['microphone'])
                 logs = []
@@ -89,7 +91,9 @@ def main():
                 state = page.evaluate("""() => {
                     const side = (d) => [...document.querySelectorAll(`.pane-body[data-side=${d}] .item`)].map(e =>
                         e.querySelector('.cap').textContent + ' | ' + e.querySelector('.txt').textContent);
-                    return {left: side('left'), right: side('right'), status: document.getElementById('statusText').textContent,
+                    const firstNow = (d) => { const f = document.querySelector(`.pane-body[data-side=${d}] .item`); return f ? f.classList.contains('now') : null; };
+                    return {left: side('left'), right: side('right'), firstNow: [firstNow('left'), firstNow('right')],
+                            pnames: [...document.querySelectorAll('.pname')].map(x => x.textContent), status: document.getElementById('statusText').textContent,
                             usage: document.getElementById('usage').textContent,
                             warn: document.getElementById('warn').textContent,
                             running: window.__app.engine.running,
@@ -104,6 +108,7 @@ def main():
                 lg = page.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_log', {{headers: {{Authorization: 'Bearer sk-good'}}}}).then(r => r.json())")['log']
                 prompts = [x['fields'].get('prompt', ['(none)'])[0] for x in lg if x.get('path') == 'transcriptions']
                 state['asr_prompts'] = prompts[-2:]
+                state['asr_langs'] = [x['fields'].get('languages[]') for x in lg if x.get('path') == 'transcriptions'][-1:]
                 state['logs'] = [lg for lg in logs if 'error' in lg.lower()][:10]
                 results[name] = state
                 ctx.close()

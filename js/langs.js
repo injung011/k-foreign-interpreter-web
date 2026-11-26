@@ -3,6 +3,13 @@ export const LANGS = {
   ko: { name: '한국어', native: '한국어', en: 'Korean', script: 'hangul', bcp: 'ko-KR', polite: 'Korean: 존댓말 (합니다/해요체)' },
   ru: { name: '러시아어', native: 'Русский', en: 'Russian', script: 'cyrillic', bcp: 'ru-RU', polite: 'Russian: always "вы", never "ты"' },
   en: { name: '영어', native: 'English', en: 'English', script: 'latin', bcp: 'en-US', polite: 'English: polite, respectful tone' },
+  // 필리핀: 필리핀식 영어(따갈로그 섞인 "Taglish"까지 알아들음). asr = 받아 적을 때 같이 들을 언어
+  'en-ph': { name: '영어(필리핀)', native: 'English (Philippines)', en: 'Philippine English', script: 'latin', bcp: 'en-PH', google: 'en', asr: ['en', 'tl'],
+    polite: 'English: warm and respectful; simple, clear English that Filipino listeners, including high-school students, understand easily',
+    asrNote: 'The speaker is Filipino and speaks Philippine English, often mixing in Tagalog/Filipino words or whole phrases (Taglish), e.g. "po", "opo", "kuya", "ate", "Panginoon", "salamat". Transcribe exactly as spoken; keep Tagalog words in Tagalog.' },
+  tl: { name: '따갈로그어', native: 'Tagalog (Filipino)', en: 'Tagalog (Filipino)', script: 'latin', bcp: 'fil-PH', google: 'tl', asr: ['tl', 'en'],
+    polite: 'Tagalog: respectful forms with "po/opo"',
+    asrNote: 'The speaker is Filipino and speaks Tagalog/Filipino, often mixed with English (Taglish). Transcribe exactly as spoken.' },
   uk: { name: '우크라이나어', native: 'Українська', en: 'Ukrainian', script: 'cyrillic', bcp: 'uk-UA', polite: 'Ukrainian: always "ви"' },
   kk: { name: '카자흐어', native: 'Қазақша', en: 'Kazakh', script: 'cyrillic', bcp: 'kk-KZ', polite: 'Kazakh: polite "сіз"' },
   uz: { name: '우즈베크어', native: 'Oʻzbekcha', en: 'Uzbek', script: 'latin', bcp: 'uz-UZ', polite: 'Uzbek: polite "siz"' },
@@ -20,6 +27,13 @@ export const LANGS = {
 export const lang = (c) => LANGS[c] || { name: c, native: c, en: c, script: 'latin', bcp: c, polite: '' };
 export const label = (c) => (lang(c).name === lang(c).native ? lang(c).name : `${lang(c).name} · ${lang(c).native}`);
 export const googleCode = (c) => lang(c).google || c;
+// 받아 적기 서비스에 알려 줄 언어 코드들(필리핀 영어 → 영어+따갈로그)
+export const asrCodes = (c) => lang(c).asr || [c];
+// 받아 적기 결과의 언어 코드(en, tl…)가 고른 두 언어 중 어느 쪽인지
+export function pairCodeFor(code, pair) {
+  if (!code) return null;
+  return pair.find((c) => c === code) || pair.find((c) => asrCodes(c)[0] === code) || pair.find((c) => asrCodes(c).includes(code)) || null;
+}
 export const sameScript = (a, b) => {
   const s = new Set([lang(a).script, lang(b).script]);
   return s.size === 1 || (s.has('han') && s.has('kana'));

@@ -67,6 +67,7 @@
       <span id="statusText"></span>
       <canvas id="meter" width="90" height="8" aria-hidden="true"></canvas>
     </div>
+    <button id="clearBtn" class="clear-btn" type="button" data-i18n-title="clearTitle">🧹 <span data-i18n="clearShort"></span></button>
     <button id="startBtn" class="start"></button>
   </footer>
 
@@ -201,6 +202,12 @@
           <option value="auto" data-i18n="layoutAuto"></option>
           <option value="stack" data-i18n="layoutStack"></option>
           <option value="side" data-i18n="layoutSide"></option>
+        </select>
+      </label>
+      <label class="field"><span data-i18n="orderLabel"></span>
+        <select id="orderSel">
+          <option value="bottom" data-i18n="orderBottom"></option>
+          <option value="top" data-i18n="orderTop"></option>
         </select>
       </label>
       <label class="switch"><input id="flipChk" type="checkbox"> <span data-i18n="flipTop"></span></label>

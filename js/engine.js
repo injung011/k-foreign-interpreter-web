@@ -170,10 +170,11 @@ export class Interpreter {
     const langs = (mode === 'auto' ? this.pair : [mode]).map((c) => lang(c).en).join(' and ');
     const head = `${SIT_EN[this.s.situation] || 'General'} conversation in ${langs}.` + (this.s.note ? ` Topic: ${this.s.note}.` : '');
     const base = PROMPTS[mode] || '';
+    const notes = (mode === 'auto' ? this.pair : [mode]).map((c) => lang(c).asrNote).filter(Boolean).join(' ');
     let prev = this.recent.slice(-2).map((r) => r.orig).join(' ');
     if (prev.length > 300) prev = prev.slice(-300);
     const script = this.cb.asrHint ? this.cb.asrHint() : '';
-    return [head, base, prev ? `Previous speech: ${prev}` : '', script ? `Prepared sermon script (the speaker usually follows it, but may skip, paraphrase or add words; transcribe what is actually said): ${script}` : ''].filter(Boolean).join('\n');
+    return [head, base, notes, prev ? `Previous speech: ${prev}` : '', script ? `Prepared sermon script (the speaker usually follows it, but may skip, paraphrase or add words; transcribe what is actually said): ${script}` : ''].filter(Boolean).join('\n');
   }
 
   // 조용하거나 잘 안 들릴 때 음성 인식이 힌트(바로 앞에 한 말)를 그대로 다시 적는 경우가 있어 걸러 냄

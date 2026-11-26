@@ -125,6 +125,27 @@ def main():
             res['after_key'] = h.evaluate('window.__app.tracker.cur')  # 처음(-1)에서 ↓ 3번 → 2
             h.reload(); h.wait_for_timeout(800)
             res['after_reload'] = h.evaluate("({cur: window.__app.tracker.cur, now: !!document.querySelector('.seg.now')})")
+            # 사용자 신고 재현: 대본 모드가 켜진 채 다시 열고 → 오른쪽 언어를 영어로 → 영어로 말함 → 화면에 나와야 함
+            h.click('.pname[data-side=right]')
+            h.click('#langList button:has-text("영어")')
+            h.wait_for_timeout(300)
+            h.click('#speakingBar button[data-v=right]')
+            res['en_scriptbar_hidden'] = h.evaluate("document.getElementById('scriptBar').hidden")
+            h.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_queue', {{method:'POST', headers:{{Authorization:'Bearer sk-good'}}, body: JSON.stringify({{texts: ['Good evening everyone, thank you for coming tonight', 'I want to share how God changed my life']}})}})")
+            h.click('#startBtn'); h.wait_for_timeout(9000); h.click('#startBtn'); h.wait_for_timeout(2500)
+            res['en_items'] = h.evaluate("[...document.querySelectorAll('.pane-body .item .txt')].map(x => x.textContent)")
+            h.screenshot(path=os.path.join(OUT, '4_after_english.png'))
+            h.click('#clearBtn'); h.wait_for_timeout(300)
+            res['after_clear_items'] = h.evaluate("document.querySelectorAll('.pane-body .item').length")
+            # 언어를 한국어·러시아어로 되돌리면 다시 대본 모드
+            h.click('.pname[data-side=right]'); h.click('#langList button:has-text("러시아어")'); h.wait_for_timeout(300)
+            res['back_to_script'] = h.evaluate("!document.getElementById('scriptBar').hidden")
+            # 12시간 넘게 안 쓴 대본 모드는 다시 열 때 꺼짐
+            h.evaluate("(() => { const x = JSON.parse(localStorage.getItem('kfi.settings')); x.scriptAt = Date.now() - 13*3600*1000; localStorage.setItem('kfi.settings', JSON.stringify(x)); })()")
+            h.reload(); h.wait_for_timeout(900)
+            res['stale_off'] = {'bar_hidden': h.evaluate("document.getElementById('scriptBar').hidden"), 'notice': h.text_content('#notice'),
+                                'script_kept': h.evaluate("!!window.__app.script")}
+            h.screenshot(path=os.path.join(OUT, '5_reopened.png'))
             res['errors'] = errs
             res['expect_cur'] = EXPECT_CUR if len(sys.argv) <= 2 else None
             br.close()

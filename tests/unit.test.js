@@ -214,3 +214,15 @@ test('문장 나누기: 쉬지 않고 빠르게 60초 말해도 귀가 먹지 �
   }
   assert.equal(run(make(0.008, 0)), 0);
 });
+
+test('필리핀: 영어(필리핀)은 영어+따갈로그로 받아 적고, 결과 코드를 고른 언어로 되돌림', async () => {
+  const { asrCodes, pairCodeFor, LANGS } = await import('../js/langs.js');
+  assert.ok(LANGS['en-ph'] && LANGS.tl);
+  assert.deepEqual(asrCodes('en-ph'), ['en', 'tl']);
+  assert.deepEqual(asrCodes('ko'), ['ko']);
+  assert.equal(pairCodeFor('tl', ['ko', 'en-ph']), 'en-ph');   // 따갈로그가 섞여도 필리핀 영어 쪽
+  assert.equal(pairCodeFor('en', ['ko', 'en-ph']), 'en-ph');
+  assert.equal(pairCodeFor('tl', ['en-ph', 'tl']), 'tl');       // 두 언어가 다 있으면 정확히 맞는 쪽
+  assert.equal(pairCodeFor('ko', ['ko', 'en-ph']), 'ko');
+  assert.equal(pairCodeFor('ja', ['ko', 'en-ph']), null);
+});
