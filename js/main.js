@@ -10,7 +10,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v1.9';
+export const VERSION = 'web v2.0';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -49,12 +49,16 @@ const SCRIPT_KEY = 'kfi.script';
 let script = null;      // { id, name, segs:[{i,n,t:{ko,ru}}], terms, langs }
 let tracker = null;
 let lastUserScroll = 0;
-let viewerParts = null; // 보는 쪽: 나눠서 받는 대본 조각
-const scriptActive = () => !!(script && s.scriptOn);
+let viewerParts = null;
+let lastScriptView = null; // 보는 쪽: 나눠서 받는 대본 조각
+// 대본 모드는 두 창의 언어가 대본의 두 언어와 같을 때만(언어를 바꾸면 저절로 일반 통역으로 — 말을 버리지 않게)
+const scriptLangsMatch = () => !!script && script.langs.every((c) => c === s.left || c === s.right);
+const scriptActive = () => !!(script && s.scriptOn && scriptLangsMatch());
+const SCRIPT_IDLE_MS = 12 * 3600 * 1000; // 12시간 넘게 안 쓰면 다음에 열 때 대본 모드 끔
 
 function save() {
   if (IS_VIEWER) {
-    const keep = (({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight }) => ({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight }))(s);
+    const keep = (({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight, order }) => ({ fontSize, layout, view, flipTop, uiLang, readLeft, readRight, order }))(s);
     try { localStorage.setItem(VIEWER_KEY, JSON.stringify(keep)); } catch (e) { /* 무시 */ }
   } else store.saveSettings(s);
 }
@@ -182,6 +186,14 @@ function render() {
   renderShareBar(share.viewers.size);
   $('scriptBtn').classList.toggle('on', scriptActive());
   renderScriptBar();
+  if (scriptView() !== lastScriptView) {
+    const was = lastScriptView;
+    lastScriptView = scriptView();
+    if (was !== null) {
+      rebuildPanes();
+      if (!lastScriptView && script && s.scriptOn && !scriptLangsMatch()) notice(t('scriptPausedLang'));
+    }
+  }
   if (!scriptView() && !entries.size) renderEmpty();
 }
 
@@ -221,12 +233,14 @@ function makeItem(isSrc, code) {
 }
 
 const RECENT = 3; // 지금 문장 앞에 크게 남겨 둘 개수
+// 새 문장을 맨 위에(최신이 항상 같은 자리) — 대본 모드는 대본 흐름대로 위→아래
+const newestTop = () => !scriptView() && s.order === 'top';
 function markRecent() {
   if (scriptView()) return;
   for (const side of ['left', 'right']) {
     const items = [...paneBody(side).querySelectorAll(':scope > .item')];
     items.forEach((el, k) => {
-      const back = items.length - 1 - k;
+      const back = newestTop() ? k : items.length - 1 - k;
       el.classList.toggle('now', back === 0);
       el.classList.toggle('recent', back > 0 && back <= RECENT);
       el.classList.toggle('old', back > RECENT);
@@ -240,7 +254,7 @@ function clearEmpty() {
 
 function addEntry(e) {
   clearEmpty();
-  const follow = scriptView() ? { left: false, right: false } : { left: atBottom('left'), right: atBottom('right') };
+  const follow = scriptView() ? { left: false, right: false } : { left: atEnd('left'), right: atEnd('right') };
   const srcSide = sideOf(e, e.src);
   const trSide = srcSide === 'left' ? 'right' : 'left';
   const src = makeItem(true, e.src);
@@ -258,7 +272,8 @@ function addEntry(e) {
   } else {
     for (const [side, el] of [[srcSide, src], [trSide, tr]]) {
       const body = paneBody(side);
-      body.insertBefore(el, body.querySelector('.interim'));
+      if (newestTop()) body.insertBefore(el, body.querySelector(':scope > .item')); // 맨 위(말하는 중인 글자 바로 아래)
+      else body.insertBefore(el, body.querySelector('.interim'));
     }
   }
   entries.set(e.id, e);
@@ -268,7 +283,7 @@ function addEntry(e) {
     entries.delete(id);
   }
   markRecent();
-  for (const side of ['left', 'right']) if (follow[side]) scrollBottom(side);
+  for (const side of ['left', 'right']) if (follow[side]) scrollEnd(side);
   if (share.active) share.entry(e);
 }
 
@@ -279,7 +294,7 @@ function setTranslation(e) {
     tr.querySelector('.cap').textContent = `${t('ai')}${e.ok ? '' : ' · ' + t('failed')}`;
     tr.querySelector('.txt').textContent = e.trans;
     const side = tr.parentElement && tr.parentElement.dataset.side;
-    if (side && !scriptView() && atBottom(side, 240)) scrollBottom(side);
+    if (side && !scriptView() && atEnd(side, 240)) scrollEnd(side);
   }
   if (!IS_VIEWER) {
     store.appendHistory({ t: new Date().toISOString(), src: e.src, tgt: e.tgt, orig: e.orig, trans: e.trans, ok: e.ok, ...(e.at !== undefined ? { adlib: true } : {}) });
@@ -319,13 +334,16 @@ function showInterim(text, code) {
   const side = code === s.left ? 'left' : 'right';
   const body = paneBody(side);
   let el = body.querySelector('.interim');
-  if (!el) { el = document.createElement('div'); el.className = 'interim'; el.dataset.code = code; body.appendChild(el); }
+  if (!el) { el = document.createElement('div'); el.className = 'interim'; el.dataset.code = code; if (newestTop()) body.prepend(el); else body.appendChild(el); }
   el.textContent = text;
-  if (atBottom(side, 240)) scrollBottom(side);
+  if (atEnd(side, 240)) scrollEnd(side);
 }
 
 const atBottom = (side, slack = 60) => { const el = paneBody(side); return el.scrollHeight - el.scrollTop - el.clientHeight < slack; };
 const scrollBottom = (side) => requestAnimationFrame(() => { const el = paneBody(side); el.scrollTop = el.scrollHeight; });
+// 최신 문장이 있는 쪽 끝(아래 또는 위)을 보고 있으면 계속 따라감
+const atEnd = (side, slack = 60) => (newestTop() ? paneBody(side).scrollTop < slack : atBottom(side, slack));
+const scrollEnd = (side) => (newestTop() ? requestAnimationFrame(() => { paneBody(side).scrollTop = 0; }) : scrollBottom(side));
 
 function setStatus(state, text) {
   $('dot').className = 'dot ' + ({ listening: 'listening', recognizing: 'busy', busy: 'busy', error: 'error' }[state] || '');
@@ -508,7 +526,7 @@ async function toggleShare() {
 }
 
 // ---------------------------------------------------------------- 대본 모드
-const scriptView = () => !!(script && s.scriptOn);
+const scriptView = () => scriptActive();
 const segSide = (code) => (code === s.left ? 'left' : code === s.right ? 'right' : null);
 
 function setScript(sc, persist = true) {
@@ -524,6 +542,10 @@ function setScript(sc, persist = true) {
 
 function loadSavedScript() {
   if (IS_VIEWER) return;
+  if (s.scriptOn && Date.now() - (+s.scriptAt || 0) > SCRIPT_IDLE_MS) {
+    s.scriptOn = false; save();
+    setTimeout(() => notice(t('scriptAutoOff')), 300);
+  }
   try { const j = JSON.parse(localStorage.getItem(SCRIPT_KEY) || 'null'); if (j && j.segs && j.segs.length) setScript(j, false); } catch (e) { /* 무시 */ }
 }
 
@@ -548,7 +570,7 @@ function setScriptCur(i, { heard = '', broadcast = true } = {}) {
   i = Math.max(-1, Math.min(i, script.segs.length - 1));
   const moved = i !== tracker.cur;
   tracker.cur = i;
-  if (!IS_VIEWER) { s.scriptCur = i; save(); }
+  if (!IS_VIEWER) { s.scriptCur = i; s.scriptAt = Date.now(); save(); }
   applyScriptCur(true);
   renderScriptBar();
   if (heard && i >= 0) setStatus('listening', `🎯 ${script.segs[i].n} · ${heard.slice(0, 40)}`);
@@ -579,7 +601,8 @@ function renderScriptBar() {
   const n = script.segs.length;
   const cur = tracker.cur;
   const pos = cur >= 0 ? `${cur + 1} / ${n}` : `– / ${n}`;
-  bar.innerHTML = '<span>📜</span><span class="ttl"></span><span class="pos"></span><span class="prog"><i></i></span>';
+  bar.innerHTML = '<span>📜</span><span class="ttl"></span><span class="pos"></span><span class="prog"><i></i></span>'
+    + (IS_VIEWER ? '' : `<span class="off" role="button" tabindex="0">${t('scriptOffShort')}</span>`);
   bar.querySelector('.ttl').textContent = scriptTitle();
   bar.querySelector('.pos').textContent = pos;
   bar.querySelector('.prog i').style.width = `${Math.round(((cur + 1) / n) * 100)}%`;
@@ -662,9 +685,12 @@ function rebuildPanes() {
   for (const e of entries.values()) {
     e.srcEl.classList.remove('adlib', 'past');
     e.trEl.classList.remove('adlib', 'past');
-    paneBody(sideOf(e, e.src)).appendChild(e.srcEl);
-    paneBody(sideOf(e, e.tgt)).appendChild(e.trEl);
+    for (const [el, code] of [[e.srcEl, e.src], [e.trEl, e.tgt]]) {
+      const body = paneBody(sideOf(e, code));
+      if (newestTop()) body.prepend(el); else body.appendChild(el);
+    }
   }
+  for (const side of ['left', 'right']) scrollEnd(side);
   for (const e of entries.values()) for (const el of [e.srcEl, e.trEl]) el.classList.remove('now', 'recent', 'old');
   markRecent();
   if (!entries.size) renderEmpty();
@@ -696,7 +722,8 @@ function sendScript() {
 
 function viewerScriptMsg(m) {
   if (m.t === 'clear') {
-    for (const [id, e] of [...entries]) if (e.at !== undefined) { e.srcEl.remove(); e.trEl.remove(); entries.delete(id); }
+    for (const [id, e] of [...entries]) if (m.all || e.at !== undefined) { e.srcEl.remove(); e.trEl.remove(); entries.delete(id); }
+    if (m.all && !scriptView()) renderEmpty();
     return;
   }
   if (m.t === 'pos') { if (tracker) setScriptCur(m.i, { broadcast: false }); return; }
@@ -739,6 +766,7 @@ function loadScriptText(text, name) {
   const [a, b] = sc.langs;
   if (LANGS[a] && LANGS[b]) { s.left = a; s.right = b; }
   s.scriptOn = true;
+  s.scriptAt = Date.now();
   s.speaking = 'left'; // 대본 언어로 고정(자동 언어 구분보다 정확)
   save(); applyEngine(); render(); rebuildPanes();
   if (share.active) { sendScript.last = 0; sendScript(); }
@@ -747,9 +775,30 @@ function loadScriptText(text, name) {
   notice(t('scriptLoaded', { n: sc.segs.length, name: scriptTitle() }));
 }
 
+function turnScriptOff() {
+  s.scriptOn = false; save(); render(); rebuildPanes();
+  if (share.active) share.send({ t: 'state', state: publicState() });
+  notice(t('scriptTurnedOff'));
+}
+
+// 화면 비우기: 지금까지 나온 자막을 모두 지움(보는 사람 화면도). 대본 모드면 처음 위치로.
+function clearScreen() {
+  for (const e of entries.values()) { e.srcEl.remove(); e.trEl.remove(); }
+  entries.clear();
+  document.querySelectorAll('.interim').forEach((x) => x.remove());
+  if (scriptView()) setScriptCur(-1);
+  if (share.active) share.send({ t: 'clear', all: true });
+  if (!scriptView()) renderEmpty();
+  notice(t('screenCleared'));
+}
+
 function bindScript() {
   $('scriptBtn').onclick = openScriptDlg;
-  $('scriptBar').onclick = () => { if (!IS_VIEWER) openScriptDlg(); };
+  $('scriptBar').onclick = (ev) => {
+    if (IS_VIEWER) return;
+    if (ev.target.closest('.off')) { turnScriptOff(); return; }
+    openScriptDlg();
+  };
   $('scriptFile').onchange = async () => {
     const f = $('scriptFile').files[0];
     if (!f) return;
@@ -759,6 +808,8 @@ function bindScript() {
   $('scriptLoad').onclick = () => { if ($('scriptText').value.trim()) loadScriptText($('scriptText').value, ''); };
   $('scriptToggle').onclick = () => {
     s.scriptOn = !s.scriptOn;
+    if (s.scriptOn) s.scriptAt = Date.now();
+    if (s.scriptOn && script && !scriptLangsMatch()) { s.left = script.langs[0]; s.right = script.langs[1]; } // 대본 언어로 맞춤
     if (s.scriptOn && script && s.left === script.langs[0]) s.speaking = 'left';
     save(); applyEngine(); render(); rebuildPanes(); renderScriptDlg();
     if (share.active) share.send({ t: 'state', state: publicState() });
@@ -803,6 +854,7 @@ function openSettings() {
   $('fontRange').value = s.fontSize; $('fontOut').textContent = `${s.fontSize}px`;
   $('layoutSel').value = s.layout;
   $('flipChk').checked = !!s.flipTop;
+  $('orderSel').value = s.order === 'top' ? 'top' : 'bottom';
   $('uiLangSel').value = uiLang();
   $('histInfo').textContent = t('histInfo', { n: store.loadHistory().length });
   $('settingsDlg').showModal();
@@ -883,6 +935,7 @@ function bindSettings() {
   $('fontRange').oninput = () => { s.fontSize = +$('fontRange').value; $('fontOut').textContent = `${s.fontSize}px`; save(); render(); };
   $('layoutSel').onchange = () => { s.layout = $('layoutSel').value; save(); render(); };
   $('flipChk').onchange = () => { s.flipTop = $('flipChk').checked; save(); render(); };
+  $('orderSel').onchange = () => { s.order = $('orderSel').value; save(); render(); rebuildPanes(); };
   $('histDown').onclick = downloadHistory;
   $('histClear').onclick = () => {
     if (!confirm(t('histConfirm'))) return;
@@ -918,6 +971,7 @@ function toggleRead(side) {
 
 function bind() {
   $('startBtn').onclick = () => (engine.running ? engine.stop() : start());
+  $('clearBtn').onclick = clearScreen;
   $('settingsBtn').onclick = openSettings;
   $('sitBtn').onclick = openSitPicker;
   $('shareBtn').onclick = () => { renderShareDlg(); $('shareDlg').showModal(); };

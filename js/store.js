@@ -24,9 +24,11 @@ export const DEFAULTS = {
   layout: 'auto',          // auto | stack(위·아래) | side(좌·우)
   view: 'both',            // both | left | right (한 창만 크게)
   flipTop: false,          // 윗창 180° 뒤집기(마주 앉은 대화)
+  order: 'bottom',         // 새 문장 위치: bottom(책처럼 아래로) | top(최신이 맨 위)
   uiLang: '',              // '' = 기기 언어 따라감
   scriptOn: false,         // 대본 모드
   scriptCur: -1,           // 대본에서 지금 위치(새로고침해도 이어서)
+  scriptAt: 0,             // 대본 모드를 마지막으로 쓴 시각(12시간 지나면 다음에 열 때 끔)
   onboarded: false,
 };
 
@@ -53,6 +55,7 @@ export function loadSettings() {
   if (!['auto', 'stack', 'side'].includes(s.layout)) s.layout = 'auto';
   if (!['both', 'left', 'right'].includes(s.view)) s.view = 'both';
   if (!['', 'ko', 'ru', 'en'].includes(s.uiLang)) s.uiLang = '';
+  if (!['bottom', 'top'].includes(s.order)) s.order = 'bottom';
   s.scriptOn = !!s.scriptOn;
   s.scriptCur = Number.isInteger(s.scriptCur) ? s.scriptCur : -1;
   return s;
