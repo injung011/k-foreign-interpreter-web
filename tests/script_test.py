@@ -55,7 +55,7 @@ def main():
             h = ctx.new_page()
             h.on('pageerror', lambda e: errs.append(f'HOST {e}'))
             h.add_init_script("if (!localStorage.getItem('kfi.settings')) {"
-                              "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', situation:'church', uiLang:'ko', speaking:'left'}));"
+                              "localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', realtime:false, situation:'church', uiLang:'ko', speaking:'left', scriptUse:'follow'}));"
                               "localStorage.setItem('kfi.openaiKey', 'sk-good');}")
             h.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1&shareVia=local')
             h.wait_for_timeout(600)
@@ -146,6 +146,25 @@ def main():
             res['stale_off'] = {'bar_hidden': h.evaluate("document.getElementById('scriptBar').hidden"), 'notice': h.text_content('#notice'),
                                 'script_kept': h.evaluate("!!window.__app.script")}
             h.screenshot(path=os.path.join(OUT, '5_reopened.png'))
+            # 참고 모드: 화면은 일반 통역, 대본과 같은 말은 준비된 번역 바로, 다른 말은 대본을 참고해 번역
+            h.click('#scriptBtn'); h.check('input[name=scriptUse][value=ref]')
+            if h.evaluate("!window.__app.settings.scriptOn"): h.click('#scriptToggle')
+            h.click('#scriptReset'); h.click('#scriptDlg form button'); h.wait_for_timeout(300)
+            h.click('#clearBtn'); h.click('#speakingBar button[data-v=left]')
+            before = len([x for x in h.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_log', {{headers:{{Authorization:'Bearer sk-good'}}}}).then(r=>r.json())")['log'] if x['path'] == 'responses'])
+            ref_heard = [LINES[1], '하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니', '오늘 이 말씀은 우리 모두에게 큰 위로가 됩니다']
+            h.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_queue', {{method:'POST', headers:{{Authorization:'Bearer sk-good'}}, body: JSON.stringify({{texts: {json.dumps(ref_heard, ensure_ascii=False)}}})}})")
+            h.click('#startBtn'); h.wait_for_timeout(11000); h.click('#startBtn'); h.wait_for_timeout(3000)
+            log = h.evaluate(f"fetch('http://127.0.0.1:{api_port}/v1/_log', {{headers:{{Authorization:'Bearer sk-good'}}}}).then(r=>r.json())")['log']
+            tr_after = [x for x in log if x['path'] == 'responses'][before:]
+            res['ref'] = {
+                'segs_on_screen': h.evaluate("document.querySelectorAll('.pane-body .seg').length"),
+                'right': h.evaluate("[...document.querySelectorAll('.pane-body[data-side=right] .item .txt')].map(x => x.textContent)"),
+                'bar': h.text_content('#scriptBar'),
+                'translate_calls': len(tr_after),
+                'reference_sent': any('Prepared script' in json.dumps(x['body'], ensure_ascii=False) for x in tr_after),
+            } if len(sys.argv) <= 2 else None
+            h.screenshot(path=os.path.join(OUT, '6_reference.png'))
             res['errors'] = errs
             res['expect_cur'] = EXPECT_CUR if len(sys.argv) <= 2 else None
             br.close()

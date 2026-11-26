@@ -61,7 +61,7 @@ def main():
             pg = ctx.new_page()
             notices = []
             pg.on('pageerror', lambda e: notices.append(f'PAGEERROR {e}'))
-            pg.add_init_script("localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', situation:'meeting', uiLang:'ko', speaking:'right', readLeft:true}));"
+            pg.add_init_script("localStorage.setItem('kfi.settings', JSON.stringify({mode:'openai', realtime:false, situation:'meeting', uiLang:'ko', speaking:'right', readLeft:true}));"
                                "localStorage.setItem('kfi.openaiKey', 'sk-good');")
             pg.goto(f'http://127.0.0.1:{web_port}/?apiBase=http://127.0.0.1:{api_port}/v1')
             pg.wait_for_timeout(600)

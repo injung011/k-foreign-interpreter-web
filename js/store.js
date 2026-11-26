@@ -19,6 +19,7 @@ export const DEFAULTS = {
   sensitivity: 5,
   silenceSec: 1.0,
   noiseSuppression: false, // 브라우저 잡음 제거(시끄러운 곳에서만)
+  realtime: true,          // OpenAI 실시간 받아 적기(스트리밍). 안 되면 저절로 기본 방식
   asrV: 2,
   fontSize: 24,
   layout: 'auto',          // auto | stack(위·아래) | side(좌·우)
@@ -27,6 +28,7 @@ export const DEFAULTS = {
   order: 'bottom',         // 새 문장 위치: bottom(책처럼 아래로) | top(최신이 맨 위)
   uiLang: '',              // '' = 기기 언어 따라감
   scriptOn: false,         // 대본 모드
+  scriptUse: 'ref',        // ref = 참고만(화면은 일반 통역) | follow = 대본을 화면에 띄우고 따라가기
   scriptCur: -1,           // 대본에서 지금 위치(새로고침해도 이어서)
   scriptAt: 0,             // 대본 모드를 마지막으로 쓴 시각(12시간 지나면 다음에 열 때 끔)
   onboarded: false,
@@ -57,6 +59,7 @@ export function loadSettings() {
   if (!['', 'ko', 'ru', 'en'].includes(s.uiLang)) s.uiLang = '';
   if (!['bottom', 'top'].includes(s.order)) s.order = 'bottom';
   s.scriptOn = !!s.scriptOn;
+  if (!['ref', 'follow'].includes(s.scriptUse)) s.scriptUse = 'ref';
   s.scriptCur = Number.isInteger(s.scriptCur) ? s.scriptCur : -1;
   return s;
 }
@@ -71,10 +74,10 @@ export const maskKey = (k) => (!k ? '(없음)' : k.length > 12 ? `${k.slice(0, 6
 // 개발·시험용: 이 컴퓨터(localhost)에서 열었을 때만 ?apiBase=http://127.0.0.1:... 로 가짜 서버 사용.
 // 실제 배포 주소에서는 무시한다(악성 링크로 키가 다른 서버로 새는 것 방지). 저장하지 않음.
 export function apiBase(provider = 'openai') {
-  const OFFICIAL = provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1';
+  const OFFICIAL = provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'; // realtime도 OpenAI 주소(wss로 바꿔 씀)
   try {
     const local = (h) => h === '127.0.0.1' || h === 'localhost';
-    const p = new URLSearchParams(location.search).get(provider === 'gemini' ? 'geminiBase' : 'apiBase');
+    const p = new URLSearchParams(location.search).get({ gemini: 'geminiBase', realtime: 'rtBase' }[provider] || 'apiBase');
     if (p && local(location.hostname) && local(new URL(p).hostname)) return p;
   } catch (e) { /* 무시 */ }
   return OFFICIAL;

@@ -99,11 +99,12 @@ export class OpenAIClient {
   }
 
   // 반환 { text, model, cost }
-  async translate(text, src, tgt, { situation = 'daily', note = '', context = [], glossary = '' } = {}) {
+  async translate(text, src, tgt, { situation = 'daily', note = '', context = [], glossary = '', reference = '' } = {}) {
     const instructions = translateInstructions(src, tgt, situation, note, glossary);
     const dir = `${lang(src).en} → ${lang(tgt).en} (${lang(tgt).native})`;
     const ctx = context.filter(Boolean).slice(-3);
-    const user = (ctx.length ? `Previous sentences (context only, do NOT translate):\n${ctx.join('\n')}\n\n` : '') + `Translate ${dir}:\n${text}`;
+    const user = (reference ? `Prepared script around this point (the speaker roughly follows it). If the sentence says the same thing as part of it, reuse that prepared wording; otherwise translate what was actually said:\n${reference}\n\n` : '')
+      + (ctx.length ? `Previous sentences (context only, do NOT translate):\n${ctx.join('\n')}\n\n` : '') + `Translate ${dir}:\n${text}`;
     const strong = `Translate the following ${lang(src).en} text into ${lang(tgt).en} (${lang(tgt).native}). Your answer MUST be written in ${lang(tgt).en} only. Do not repeat the original.\n\n${text}`;
     const start = this.textModel ? TEXT_MODELS.indexOf(this.textModel) : 0;
     const models = TEXT_MODELS.slice(Math.max(0, start));

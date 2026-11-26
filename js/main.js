@@ -10,7 +10,7 @@ import { SITUATIONS } from './situations.js';
 import * as store from './store.js';
 import { Speaker, VOICES } from './tts.js';
 
-export const VERSION = 'web v2.0';
+export const VERSION = 'web v2.1';
 const $ = (id) => document.getElementById(id);
 const MAX_ROWS = 150;
 const params = new URLSearchParams(location.search);
@@ -37,6 +37,7 @@ const syncKey = () => { key = CLOUD.includes(s.mode) ? keys[s.mode] || '' : ''; 
 const isCloud = () => CLOUD.includes(s.mode) && !!key;
 const base = store.apiBase();
 const geminiBase = store.apiBase('gemini');
+const rtBase = store.apiBase('realtime');
 const entries = new Map();
 let wakeLock = null;
 let speakingCount = 0;
@@ -53,7 +54,10 @@ let viewerParts = null;
 let lastScriptView = null; // 보는 쪽: 나눠서 받는 대본 조각
 // 대본 모드는 두 창의 언어가 대본의 두 언어와 같을 때만(언어를 바꾸면 저절로 일반 통역으로 — 말을 버리지 않게)
 const scriptLangsMatch = () => !!script && script.langs.every((c) => c === s.left || c === s.right);
-const scriptActive = () => !!(script && s.scriptOn && scriptLangsMatch());
+// 대본 사용 방식: follow = 대본을 화면에 띄우고 위치 따라가기 / ref = 화면은 일반 통역, 받아 적기·번역에 대본을 참고만
+const scriptActive = () => !!(script && s.scriptOn && s.scriptUse === 'follow' && scriptLangsMatch());
+const scriptRef = () => !!(script && s.scriptOn && s.scriptUse !== 'follow' && scriptLangsMatch());
+const scriptAny = () => scriptActive() || scriptRef();
 const SCRIPT_IDLE_MS = 12 * 3600 * 1000; // 12시간 넘게 안 쓰면 다음에 열 때 대본 모드 끔
 
 function save() {
@@ -75,9 +79,10 @@ const engine = new Interpreter({
   onCost: addCost,
   onStopped: () => { setRunning(false); setStatus('idle', t('stopped')); },
   claim: claimScript,
-  asrHint: () => (scriptActive() ? tracker.upcoming(500) : ''),
-  asrKeywords: () => (scriptActive() ? [...glossaryKeywords(script.terms, 'a', 40), ...glossaryKeywords(script.terms, 'b', 20)] : []),
-  glossary: () => (scriptActive() ? glossaryText(script.terms) : ''),
+  asrHint: () => (scriptAny() ? tracker.upcoming(500) : ''),
+  asrKeywords: () => (scriptAny() ? [...glossaryKeywords(script.terms, 'a', 40), ...glossaryKeywords(script.terms, 'b', 20)] : []),
+  glossary: () => (scriptAny() ? glossaryText(script.terms) : ''),
+  reference: scriptReference,
 });
 const speaker = new Speaker({
   onStart: (item) => {
@@ -128,6 +133,7 @@ function applyEngine() {
   const sig = `${s.mode}|${key}`;
   if (sig !== lastClientSig) { lastClientSig = sig; lastClient = isCloud() ? makeClient() : null; } // 같은 키면 그대로(모델 선택 기억)
   engine.configure(s, lastClient);
+  engine.rtBase = rtBase;
   speaker.configure(s.mode === 'openai' ? lastClient : null, s.voice); // Gemini·무료는 기기 목소리로 읽기
 }
 
@@ -550,7 +556,32 @@ function loadSavedScript() {
 }
 
 // 들은 말이 대본에 있으면 그 구간으로 옮기고 true(번역 생략), 없으면 false(파란 글씨로 AI 번역)
+// 참고 모드: 화면은 일반 통역. 들은 말로 대본 위치만 조용히 따라가고, 한 구간을 거의 그대로 말했으면 준비된 번역을 바로 씀
+function referScript(e) {
+  if (e.src !== script.langs[0]) return false;
+  const m = tracker.match(e.orig);
+  if (!m) return false;
+  tracker.cur = m.idx;
+  s.scriptCur = m.idx; s.scriptAt = Date.now(); save();
+  renderScriptBar();
+  const seg = script.segs[m.idx];
+  const n = (x) => String(x || '').replace(/[^\p{L}\p{N}]/gu, '');
+  const ready = seg.t[e.tgt];
+  if (ready && m.cov >= 0.7 && n(e.orig).length >= n(seg.t[e.src]).length * 0.7) e.preset = ready;
+  return false;
+}
+
+// 번역할 때 같이 보낼 대본 부분(지금 위치 앞뒤)
+function scriptReference() {
+  if (!scriptRef()) return '';
+  const [a, b] = script.langs;
+  const lo = Math.max(0, tracker.cur - 1), hi = Math.min(script.segs.length, Math.max(tracker.cur, 0) + 3);
+  const tag = (c) => lang(c).en;
+  return script.segs.slice(lo, hi).map((x) => `${tag(a)}: ${x.t[a] || ''}\n${tag(b)}: ${x.t[b] || ''}`).join('\n\n');
+}
+
 function claimScript(e) {
+  if (scriptRef()) return referScript(e);
   if (!scriptActive()) return false;
   e.at = tracker.cur;
   if (e.src !== script.langs[0]) return true; // 대본 모드는 한쪽 방향: 대본 언어(보통 한국어)가 아닌 말은 통역하지 않음
@@ -596,11 +627,11 @@ function scriptTitle() {
 // 위쪽 막대: 불러온 대본 이름과 진행 위치(누르면 대본 창)
 function renderScriptBar() {
   const bar = $('scriptBar');
-  bar.hidden = !scriptView();
+  bar.hidden = !(scriptView() || (scriptRef() && !IS_VIEWER));
   if (bar.hidden) return;
   const n = script.segs.length;
   const cur = tracker.cur;
-  const pos = cur >= 0 ? `${cur + 1} / ${n}` : `– / ${n}`;
+  const pos = (scriptRef() ? t('scriptRefTag') + ' · ' : '') + (cur >= 0 ? `${cur + 1} / ${n}` : `– / ${n}`);
   bar.innerHTML = '<span>📜</span><span class="ttl"></span><span class="pos"></span><span class="prog"><i></i></span>'
     + (IS_VIEWER ? '' : `<span class="off" role="button" tabindex="0">${t('scriptOffShort')}</span>`);
   bar.querySelector('.ttl').textContent = scriptTitle();
@@ -750,6 +781,7 @@ function renderScriptDlg() {
     ? '✅ ' + t('scriptInfo', { name: scriptTitle(), n: script.segs.length, m: script.terms.length, cur: tracker.cur >= 0 ? tracker.cur + 1 : '-' })
     : t('scriptNone');
   $('scriptToggle').textContent = s.scriptOn ? t('scriptOff') : t('scriptOn');
+  for (const r of document.querySelectorAll('input[name=scriptUse]')) r.checked = r.value === (s.scriptUse === 'follow' ? 'follow' : 'ref');
   $('scriptToggle').disabled = !script;
   $('scriptReset').disabled = !script;
   $('scriptClear').disabled = !script;
@@ -814,6 +846,12 @@ function bindScript() {
     save(); applyEngine(); render(); rebuildPanes(); renderScriptDlg();
     if (share.active) share.send({ t: 'state', state: publicState() });
   };
+  for (const r of document.querySelectorAll('input[name=scriptUse]')) {
+    r.onchange = () => {
+      s.scriptUse = r.value; save(); render(); rebuildPanes(); renderScriptDlg();
+      if (share.active) share.send({ t: 'state', state: publicState() });
+    };
+  }
   $('scriptReset').onclick = () => { clearAdlibs(); setScriptCur(-1); renderScriptDlg(); };
   $('scriptClear').onclick = () => {
     if (!confirm(t('scriptConfirmClear'))) return;
@@ -850,6 +888,7 @@ function openSettings() {
   $('muteChk').checked = !!s.muteWhileSpeaking;
   $('sensRange').value = s.sensitivity; $('sensOut').textContent = s.sensitivity;
   $('nsChk').checked = !!s.noiseSuppression;
+  $('rtChk').checked = s.realtime !== false;
   $('silRange').value = s.silenceSec; $('silOut').textContent = `${s.silenceSec}${t('sec')}`;
   $('fontRange').value = s.fontSize; $('fontOut').textContent = `${s.fontSize}px`;
   $('layoutSel').value = s.layout;
@@ -868,6 +907,7 @@ function renderKeyBox() {
   const gm = s.mode === 'gemini';
   $('keyLabelTxt').textContent = t(gm ? 'keyLabelGemini' : 'keyLabel');
   $('keyInput').placeholder = t(gm ? 'keyPhGemini' : 'keyPh');
+  $('rtRow').hidden = gm; // 실시간은 OpenAI만
   $('keyInput').value = key;
   $('keyInput').classList.remove('reveal');
   $('keyShow').textContent = t('show');
@@ -931,6 +971,7 @@ function bindSettings() {
   $('muteChk').onchange = () => { s.muteWhileSpeaking = $('muteChk').checked; save(); if (!s.muteWhileSpeaking) engine.mute(false); };
   $('sensRange').oninput = () => { s.sensitivity = +$('sensRange').value; $('sensOut').textContent = s.sensitivity; save(); applyEngine(); };
   $('silRange').oninput = () => { s.silenceSec = +$('silRange').value; $('silOut').textContent = `${s.silenceSec}${t('sec')}`; save(); applyEngine(); };
+  $('rtChk').onchange = () => { s.realtime = $('rtChk').checked; save(); if (engine.running) notice(t('restartToApply')); };
   $('nsChk').onchange = () => { s.noiseSuppression = $('nsChk').checked; save(); if (engine.running) notice(t('restartToApply')); };
   $('fontRange').oninput = () => { s.fontSize = +$('fontRange').value; $('fontOut').textContent = `${s.fontSize}px`; save(); render(); };
   $('layoutSel').onchange = () => { s.layout = $('layoutSel').value; save(); render(); };
